@@ -31,12 +31,12 @@
   },
   "monday": {
     "enabled": true,
-    "boardId": "123456789",
+    "boardId": "test-board-123",
     "workspaceId": null,
-    "persistenceMode": "hybrid",
-    "autoSync": true,
-    "syncInterval": 600,
-    "conflictResolution": "newest",
+    "persistenceMode": "local",
+    "autoSync": false,
+    "syncInterval": 300,
+    "conflictResolution": "prompt",
     "fallbackToLocal": true,
     "cacheEnabled": true,
     "retryAttempts": 3,
@@ -63,6 +63,5 @@
       "blocked": null,
       "subtasks": null
     }
-  },
-  "configVersion": "2.0.0"
+  }
 }
