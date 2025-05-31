@@ -1,18 +1,11 @@
 # Task ID: 3
-# Title: Implement Basic Task Operations
-# Status: done
-# Dependencies: 1
+# Title: Develop Data Transformation Layer
+# Status: pending
+# Dependencies: 1, 2
 # Priority: high
-# Description: Create core functionality for managing tasks including listing, creating, updating, and deleting tasks.
+# Description: Create utility functions to transform between Task Master data structures and Monday.com item representations.
 # Details:
-Implement the following task operations:
-- List tasks with filtering options
-- Create new tasks with required fields
-- Update existing task properties
-- Delete tasks
-- Change task status (pending/done/deferred)
-- Handle dependencies between tasks
-- Manage task priorities
+Implement a data transformation layer in `monday-data-transformer.js` that handles bidirectional conversion between Task Master task objects and Monday.com items. Create functions: `transformTaskToMondayColumns(task)` to convert task properties to Monday column values, `transformMondayItemToTask(item, schema)` to convert Monday items back to task objects, `transformMondayItemsToTasks(items, schema)` for batch conversions, and `validateTransformedData(original, transformed)` to ensure data integrity during transformations. Handle special cases like dependencies (using board relation columns), subtasks (using parent references), and status mapping. Implement proper type conversions and handle null/undefined values gracefully. Ensure all Task Master properties map correctly to Monday.com columns according to the mapping defined in the PRD.
 
 # Test Strategy:
-Test each operation with valid and invalid inputs. Verify that dependencies are properly tracked and that status changes are reflected correctly in the tasks.json file.
+Create comprehensive unit tests for all transformation functions with various task structures. Test edge cases like empty fields, special characters, and maximum field lengths. Verify bidirectional transformations maintain data integrity. Test with complex task structures including nested subtasks and multiple dependencies. Validate that all Task Master properties are correctly preserved during round-trip transformations.

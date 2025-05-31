@@ -1,16 +1,21 @@
 # Task ID: 1
-# Title: Implement Task Data Structure
+# Title: Create Monday.com API Client Module
 # Status: done
 # Dependencies: None
 # Priority: high
-# Description: Design and implement the core tasks.json structure that will serve as the single source of truth for the system.
+# Description: Develop a core API client module that interacts directly with the Monday.com GraphQL API to handle all Monday.com API interactions with robust session management, error handling, and consistent return formats for the Task Master persistence layer. The client must use direct HTTP requests to Monday.com's official GraphQL endpoint, leveraging API key authentication for all operations. The module should provide comprehensive coverage for board, item, column, and update operations, with smart rate limiting and exponential backoff for transient failures. All functions must return standardized response objects and handle Monday.com API errors gracefully. Do not use the MCP client interface or any MCP tool wrappers; all communication must be direct via GraphQL. The file `scripts/modules/monday-api-client.js` should reflect this new architecture.
 # Details:
-Create the foundational data structure including:
-- JSON schema for tasks.json
-- Task model with all required fields (id, title, description, status, dependencies, priority, details, testStrategy, subtasks)
-- Validation functions for the task model
-- Basic file system operations for reading/writing tasks.json
-- Error handling for file operations
+Rewrite `monday-api-client.js` as a direct abstraction layer over the Monday.com GraphQL API. The module must:
+- Use native `fetch()` for all HTTP requests to `https://api.monday.com/v2`.
+- Authenticate using a Monday.com API key provided at construction; validate its presence before any operation.
+- Implement wrapper functions for authentication, board operations, item operations, column value management, and updates, using native GraphQL queries and mutations.
+- Handle GraphQL errors and HTTP status codes, including 429 rate limits, with exponential backoff and retry logic for transient failures.
+- Standardize all responses to a consistent format, including error details when applicable.
+- Support all column types and complex column value updates.
+- Remove all MCP dependencies and tool invocation logic; do not use `mcpClient` or any MCP tool names.
+- Ensure the module is ready for integration with the Task Master persistence layer.
+
+All previous MCP-specific logic and tool wrappers must be replaced with direct GraphQL query/mutation implementations.
 
 # Test Strategy:
-Verify that the tasks.json structure can be created, read, and validated. Test with sample data to ensure all fields are properly handled and that validation correctly identifies invalid structures.
+Create unit tests using Jest with mocked fetch responses to test all API client wrapper functions. Test error handling by simulating various GraphQL and HTTP failures, including rate limit scenarios (429). Verify API key validation and error handling. Test batch operations and retry logic. Create integration tests with a test Monday.com account and a real API key to verify actual API behavior through the direct GraphQL interface.
