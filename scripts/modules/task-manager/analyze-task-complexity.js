@@ -3,7 +3,8 @@ import boxen from 'boxen';
 import readline from 'readline';
 import fs from 'fs';
 
-import { log, readJSON, writeJSON, isSilentMode } from '../utils.js';
+import { log, isSilentMode } from '../utils.js';
+import { persistenceManager } from '../persistence-manager.js';
 
 import {
 	startLoadingIndicator,
@@ -63,12 +64,12 @@ Do not include any explanatory text, markdown formatting, or code block markers 
  * @param {function} [context.reportProgress] - Deprecated: Function to report progress (ignored)
  */
 async function analyzeTaskComplexity(options, context = {}) {
-	const { session, mcpLog } = context;
+	const { session, mcpLog, projectRoot } = context;
 	const tasksPath = options.file || 'tasks/tasks.json';
 	const outputPath = options.output || 'scripts/task-complexity-report.json';
 	const thresholdScore = parseFloat(options.threshold || '5');
 	const useResearch = options.research || false;
-	const projectRoot = options.projectRoot;
+	const effectiveProjectRoot = options.projectRoot || projectRoot;
 	// New parameters for task ID filtering
 	const specificIds = options.id
 		? options.id
@@ -80,6 +81,9 @@ async function analyzeTaskComplexity(options, context = {}) {
 	const toId = options.to !== undefined ? parseInt(options.to, 10) : null;
 
 	const outputFormat = mcpLog ? 'json' : 'text';
+
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(effectiveProjectRoot, session);
 
 	const reportLog = (message, level = 'info') => {
 		if (mcpLog) {
@@ -108,7 +112,7 @@ async function analyzeTaskComplexity(options, context = {}) {
 			originalTaskCount = options._originalTaskCount || tasksData.tasks.length;
 			if (!options._originalTaskCount) {
 				try {
-					originalData = readJSON(tasksPath);
+					originalData = await persistenceManager.readTasks(tasksPath, { projectRoot: effectiveProjectRoot, session });
 					if (originalData && originalData.tasks) {
 						originalTaskCount = originalData.tasks.length;
 					}
@@ -117,7 +121,7 @@ async function analyzeTaskComplexity(options, context = {}) {
 				}
 			}
 		} else {
-			originalData = readJSON(tasksPath);
+			originalData = await persistenceManager.readTasks(tasksPath, { projectRoot: effectiveProjectRoot, session });
 			if (
 				!originalData ||
 				!originalData.tasks ||
@@ -225,7 +229,7 @@ async function analyzeTaskComplexity(options, context = {}) {
 		let existingAnalysisMap = new Map(); // For quick lookups by task ID
 		try {
 			if (fs.existsSync(outputPath)) {
-				existingReport = readJSON(outputPath);
+				existingReport = await persistenceManager.readTasks(outputPath, { projectRoot: effectiveProjectRoot, session });
 				reportLog(`Found existing complexity report at ${outputPath}`, 'info');
 
 				if (
@@ -284,7 +288,7 @@ async function analyzeTaskComplexity(options, context = {}) {
 				complexityAnalysis: existingReport?.complexityAnalysis || []
 			};
 			reportLog(`Writing complexity report to ${outputPath}...`, 'info');
-			writeJSON(outputPath, emptyReport);
+			await persistenceManager.writeTasks(outputPath, emptyReport, { projectRoot: effectiveProjectRoot, session });
 			reportLog(
 				`Task complexity analysis complete. Report written to ${outputPath}`,
 				'success'
@@ -360,7 +364,7 @@ async function analyzeTaskComplexity(options, context = {}) {
 				systemPrompt,
 				role,
 				session,
-				projectRoot,
+				projectRoot: effectiveProjectRoot,
 				commandName: 'analyze-complexity',
 				outputType: mcpLog ? 'mcp' : 'cli'
 			});
@@ -397,37 +401,45 @@ async function analyzeTaskComplexity(options, context = {}) {
 						);
 					} else {
 						reportLog(
-							'Warning: Response does not appear to be a JSON array.',
+							'Could not find JSON array in response. Using fallback.',
 							'warn'
 						);
+						throw new Error('Invalid JSON format in AI response');
 					}
 				}
 
-				if (outputFormat === 'text' && getDebugFlag(session)) {
-					console.log(chalk.gray('Attempting to parse cleaned JSON...'));
-					console.log(chalk.gray('Cleaned response (first 100 chars):'));
-					console.log(chalk.gray(cleanedResponse.substring(0, 100)));
-					console.log(chalk.gray('Last 100 chars:'));
-					console.log(
-						chalk.gray(cleanedResponse.substring(cleanedResponse.length - 100))
-					);
+				complexityAnalysis = JSON.parse(cleanedResponse);
+
+				if (!Array.isArray(complexityAnalysis)) {
+					throw new Error('Response is not an array');
 				}
 
-				complexityAnalysis = JSON.parse(cleanedResponse);
-			} catch (parseError) {
-				if (loadingIndicator) stopLoadingIndicator(loadingIndicator);
 				reportLog(
-					`Error parsing complexity analysis JSON: ${parseError.message}`,
+					`Successfully parsed ${complexityAnalysis.length} task analyses`,
+					'info'
+				);
+			} catch (parseError) {
+				reportLog(
+					`Error parsing AI response: ${parseError.message}`,
 					'error'
 				);
 				if (outputFormat === 'text') {
-					console.error(
-						chalk.red(
-							`Error parsing complexity analysis JSON: ${parseError.message}`
+					console.log(
+						chalk.yellow(
+							'Failed to parse AI response. Creating default analysis...'
 						)
 					);
 				}
-				throw parseError;
+
+				// Create default analysis for all tasks
+				complexityAnalysis = tasksData.tasks.map((task) => ({
+					taskId: task.id,
+					taskTitle: task.title,
+					complexityScore: 5,
+					recommendedSubtasks: 3,
+					expansionPrompt: `Break down this task with a focus on ${task.title.toLowerCase()}.`,
+					reasoning: 'Default analysis due to AI parsing error.'
+				}));
 			}
 
 			const taskIds = tasksData.tasks.map((t) => t.id);
@@ -508,7 +520,7 @@ async function analyzeTaskComplexity(options, context = {}) {
 				complexityAnalysis: finalComplexityAnalysis
 			};
 			reportLog(`Writing complexity report to ${outputPath}...`, 'info');
-			writeJSON(outputPath, report);
+			await persistenceManager.writeTasks(outputPath, report, { projectRoot: effectiveProjectRoot, session });
 
 			reportLog(
 				`Task complexity analysis complete. Report written to ${outputPath}`,

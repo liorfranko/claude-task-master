@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 
-import { log, readJSON, writeJSON, isSilentMode } from '../utils.js';
+import { log, isSilentMode } from '../utils.js';
+import { persistenceManager } from '../persistence-manager.js';
 
 import {
 	startLoadingIndicator,
@@ -418,6 +419,9 @@ async function expandTask(
 	const projectRoot =
 		contextProjectRoot || path.dirname(path.dirname(tasksPath));
 
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
+
 	// Use mcpLog if available, otherwise use the default console log wrapper
 	const logger = mcpLog || {
 		info: (msg) => !isSilentMode() && log('info', msg),
@@ -432,9 +436,9 @@ async function expandTask(
 	}
 
 	try {
-		// --- Task Loading/Filtering (Unchanged) ---
+		// --- Task Loading/Filtering (Updated to use persistence manager) ---
 		logger.info(`Reading tasks from ${tasksPath}`);
-		const data = readJSON(tasksPath);
+		const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 		if (!data || !data.tasks)
 			throw new Error(`Invalid tasks data in ${tasksPath}`);
 		const taskIndex = data.tasks.findIndex(
@@ -470,7 +474,7 @@ async function expandTask(
 
 		try {
 			if (fs.existsSync(complexityReportPath)) {
-				const complexityReport = readJSON(complexityReportPath);
+				const complexityReport = await persistenceManager.readTasks(complexityReportPath, { projectRoot, session });
 				taskAnalysis = complexityReport?.complexityAnalysis?.find(
 					(a) => a.taskId === task.id
 				);
@@ -619,7 +623,7 @@ async function expandTask(
 			if (loadingIndicator) stopLoadingIndicator(loadingIndicator);
 		}
 
-		// --- Task Update & File Writing ---
+		// --- Task Update & File Writing (Updated to use persistence manager) ---
 		// Ensure task.subtasks is an array before appending
 		if (!Array.isArray(task.subtasks)) {
 			task.subtasks = [];
@@ -629,7 +633,7 @@ async function expandTask(
 		// --- End Change: Append instead of replace ---
 
 		data.tasks[taskIndex] = task; // Assign the modified task back
-		writeJSON(tasksPath, data);
+		await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
 		await generateTaskFiles(tasksPath, path.dirname(tasksPath));
 
 		// Display AI Usage Summary for CLI

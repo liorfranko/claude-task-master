@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
 
-import { log, readJSON } from '../utils.js';
+import { log } from '../utils.js';
+import { persistenceManager } from '../persistence-manager.js';
 import { formatDependenciesWithStatus } from '../ui.js';
 import { validateAndFixDependencies } from '../dependency-manager.js';
 import { getDebugFlag } from '../config-manager.js';
@@ -12,14 +13,20 @@ import { getDebugFlag } from '../config-manager.js';
  * @param {string} tasksPath - Path to the tasks.json file
  * @param {string} outputDir - Output directory for task files
  * @param {Object} options - Additional options (mcpLog for MCP mode)
+ * @param {Object} context - Context object containing session and projectRoot for persistence
  * @returns {Object|undefined} Result object in MCP mode, undefined in CLI mode
  */
-function generateTaskFiles(tasksPath, outputDir, options = {}) {
+async function generateTaskFiles(tasksPath, outputDir, options = {}, context = {}) {
+	const { session, projectRoot } = context;
+
 	try {
+		// Initialize persistence manager with project context
+		await persistenceManager.initialize(projectRoot, session);
+
 		// Determine if we're in MCP mode by checking for mcpLog
 		const isMcpMode = !!options?.mcpLog;
 
-		const data = readJSON(tasksPath);
+		const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 		if (!data || !data.tasks) {
 			throw new Error(`No valid tasks found in ${tasksPath}`);
 		}

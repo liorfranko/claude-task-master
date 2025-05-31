@@ -7,6 +7,13 @@
  */
 
 import { log } from './utils.js';
+import { 
+  mondayValidation, 
+  mondayErrorHandler, 
+  mondayRateLimiter,
+  MONDAY_ERROR_TYPES,
+  MONDAY_LIMITS 
+} from './monday-validation.js';
 
 /**
  * Monday.com API Client Class
@@ -65,11 +72,17 @@ export class MondayApiClient {
   async getBoardSchema(boardId) {
     this._validateInitialized();
     
+    // Validate board ID
+    const boardIdValidation = mondayValidation.validateId(boardId, 'board');
+    if (!boardIdValidation.valid) {
+      throw new Error(boardIdValidation.message);
+    }
+    
     try {
       return await this._executeWithRetry(async () => {
         const query = `
           query {
-            boards(ids: [${boardId}]) {
+            boards(ids: [${boardIdValidation.sanitized}]) {
               id
               name
               description
@@ -92,8 +105,14 @@ export class MondayApiClient {
         return this._standardizeResponse(result.data.boards[0], 'board_schema');
       });
     } catch (error) {
-      log('error', `Failed to get board schema for board ${boardId}:`, error.message);
-      throw new Error(`Board schema retrieval failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'getBoardSchema', 
+        boardId: boardIdValidation.sanitized,
+        resourceType: 'board'
+      });
+      
+      log('error', `Failed to get board schema for board ${boardIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
   }
 
@@ -106,12 +125,21 @@ export class MondayApiClient {
   async getBoardItems(boardId, limit = 100) {
     this._validateInitialized();
     
+    // Validate board ID
+    const boardIdValidation = mondayValidation.validateId(boardId, 'board');
+    if (!boardIdValidation.valid) {
+      throw new Error(boardIdValidation.message);
+    }
+    
+    // Validate limit
+    const sanitizedLimit = Math.min(Math.max(1, parseInt(limit) || 100), 1000); // Cap at 1000 items
+    
     try {
       return await this._executeWithRetry(async () => {
         const query = `
           query {
-            boards(ids: [${boardId}]) {
-              items_page(limit: ${limit}) {
+            boards(ids: [${boardIdValidation.sanitized}]) {
+              items_page(limit: ${sanitizedLimit}) {
                 items {
                   id
                   name
@@ -137,8 +165,14 @@ export class MondayApiClient {
         return this._standardizeResponse(result.data.boards[0].items_page.items, 'board_items');
       });
     } catch (error) {
-      log('error', `Failed to get board items for board ${boardId}:`, error.message);
-      throw new Error(`Board items retrieval failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'getBoardItems', 
+        boardId: boardIdValidation.sanitized,
+        resourceType: 'board'
+      });
+      
+      log('error', `Failed to get board items for board ${boardIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
   }
 
@@ -153,18 +187,44 @@ export class MondayApiClient {
   async createItem(boardId, name, columnValues = {}, groupId = null) {
     this._validateInitialized();
     
+    // Validate board ID
+    const boardIdValidation = mondayValidation.validateId(boardId, 'board');
+    if (!boardIdValidation.valid) {
+      throw new Error(boardIdValidation.message);
+    }
+    
+    // Validate item name
+    const nameValidation = mondayValidation.validateItemName(name);
+    if (!nameValidation.valid) {
+      throw new Error(nameValidation.message);
+    }
+    
+    // Check rate limits before making the request
+    const rateLimitCheck = await mondayRateLimiter.canMakeRequest(500); // Estimate 500 complexity points for creation
+    if (!rateLimitCheck.allowed) {
+      if (rateLimitCheck.reason === 'DAILY_LIMIT_EXCEEDED') {
+        throw new Error(`Daily API limit exceeded. Reset time: ${rateLimitCheck.resetTime}`);
+      } else if (rateLimitCheck.reason === 'COMPLEXITY_BUDGET_EXHAUSTED') {
+        throw new Error(`Complexity budget exhausted. Reset time: ${rateLimitCheck.resetTime}`);
+      } else if (rateLimitCheck.reason === 'CONCURRENT_LIMIT_EXCEEDED') {
+        await new Promise(resolve => setTimeout(resolve, rateLimitCheck.waitTime));
+      }
+    }
+    
     try {
       return await this._executeWithRetry(async () => {
-        const columnValuesStr = JSON.stringify(columnValues).replace(/"/g, '\\"');
+        const columnValuesStr = Object.keys(columnValues).length > 0 
+          ? JSON.stringify(columnValues).replace(/"/g, '\\"')
+          : '';
         const groupClause = groupId ? `, group_id: "${groupId}"` : '';
         
         const mutation = `
           mutation {
             create_item(
-              board_id: ${boardId},
-              item_name: "${name.replace(/"/g, '\\"')}"
+              board_id: ${boardIdValidation.sanitized},
+              item_name: "${nameValidation.sanitized.replace(/"/g, '\\"')}"
               ${groupClause}
-              ${Object.keys(columnValues).length > 0 ? `, column_values: "${columnValuesStr}"` : ''}
+              ${columnValuesStr ? `, column_values: "${columnValuesStr}"` : ''}
             ) {
               id
               name
@@ -182,12 +242,21 @@ export class MondayApiClient {
           }
         `;
         
+        // Track the API request
+        mondayRateLimiter.trackRequest(500);
+        
         const result = await this._graphqlRequest(mutation);
         return this._standardizeResponse(result.data.create_item, 'item_created');
       });
     } catch (error) {
-      log('error', `Failed to create item "${name}" in board ${boardId}:`, error.message);
-      throw new Error(`Item creation failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'createItem', 
+        boardId: boardIdValidation.sanitized,
+        itemName: nameValidation.sanitized
+      });
+      
+      log('error', `Failed to create item "${nameValidation.sanitized}" in board ${boardIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
   }
 
@@ -201,6 +270,28 @@ export class MondayApiClient {
   async updateItem(boardId, itemId, columnValues) {
     this._validateInitialized();
     
+    // Validate board ID
+    const boardIdValidation = mondayValidation.validateId(boardId, 'board');
+    if (!boardIdValidation.valid) {
+      throw new Error(boardIdValidation.message);
+    }
+    
+    // Validate item ID
+    const itemIdValidation = mondayValidation.validateId(itemId, 'item');
+    if (!itemIdValidation.valid) {
+      throw new Error(itemIdValidation.message);
+    }
+    
+    // Check rate limits
+    const rateLimitCheck = await mondayRateLimiter.canMakeRequest(300);
+    if (!rateLimitCheck.allowed) {
+      if (rateLimitCheck.reason === 'DAILY_LIMIT_EXCEEDED') {
+        throw new Error(`Daily API limit exceeded. Reset time: ${rateLimitCheck.resetTime}`);
+      } else if (rateLimitCheck.reason === 'COMPLEXITY_BUDGET_EXHAUSTED') {
+        await mondayRateLimiter.waitForRateLimit(60000); // Wait 1 minute for complexity reset
+      }
+    }
+    
     try {
       return await this._executeWithRetry(async () => {
         const columnValuesStr = JSON.stringify(columnValues).replace(/"/g, '\\"');
@@ -208,8 +299,8 @@ export class MondayApiClient {
         const mutation = `
           mutation {
             change_multiple_column_values(
-              board_id: ${boardId},
-              item_id: ${itemId},
+              board_id: ${boardIdValidation.sanitized},
+              item_id: ${itemIdValidation.sanitized},
               column_values: "${columnValuesStr}"
             ) {
               id
@@ -223,12 +314,21 @@ export class MondayApiClient {
           }
         `;
         
+        // Track the API request
+        mondayRateLimiter.trackRequest(300);
+        
         const result = await this._graphqlRequest(mutation);
         return this._standardizeResponse(result.data.change_multiple_column_values, 'item_updated');
       });
     } catch (error) {
-      log('error', `Failed to update item ${itemId} in board ${boardId}:`, error.message);
-      throw new Error(`Item update failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'updateItem', 
+        boardId: boardIdValidation.sanitized,
+        itemId: itemIdValidation.sanitized
+      });
+      
+      log('error', `Failed to update item ${itemIdValidation.sanitized} in board ${boardIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
   }
 
@@ -240,22 +340,46 @@ export class MondayApiClient {
   async deleteItem(itemId) {
     this._validateInitialized();
     
+    // Validate item ID
+    const itemIdValidation = mondayValidation.validateId(itemId, 'item');
+    if (!itemIdValidation.valid) {
+      throw new Error(itemIdValidation.message);
+    }
+    
+    // Check rate limits
+    const rateLimitCheck = await mondayRateLimiter.canMakeRequest(200);
+    if (!rateLimitCheck.allowed) {
+      if (rateLimitCheck.reason === 'DAILY_LIMIT_EXCEEDED') {
+        throw new Error(`Daily API limit exceeded. Reset time: ${rateLimitCheck.resetTime}`);
+      } else if (rateLimitCheck.reason === 'COMPLEXITY_BUDGET_EXHAUSTED') {
+        await mondayRateLimiter.waitForRateLimit(60000);
+      }
+    }
+    
     try {
       return await this._executeWithRetry(async () => {
         const mutation = `
           mutation {
-            delete_item(item_id: ${itemId}) {
+            delete_item(item_id: ${itemIdValidation.sanitized}) {
               id
             }
           }
         `;
         
+        // Track the API request
+        mondayRateLimiter.trackRequest(200);
+        
         const result = await this._graphqlRequest(mutation);
         return this._standardizeResponse(result.data.delete_item, 'item_deleted');
       });
     } catch (error) {
-      log('error', `Failed to delete item ${itemId}:`, error.message);
-      throw new Error(`Item deletion failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'deleteItem', 
+        itemId: itemIdValidation.sanitized
+      });
+      
+      log('error', `Failed to delete item ${itemIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
   }
 
@@ -268,11 +392,32 @@ export class MondayApiClient {
   async moveItemToGroup(itemId, groupId) {
     this._validateInitialized();
     
+    // Validate item ID
+    const itemIdValidation = mondayValidation.validateId(itemId, 'item');
+    if (!itemIdValidation.valid) {
+      throw new Error(itemIdValidation.message);
+    }
+    
+    // Validate group ID (basic string validation)
+    if (!groupId || typeof groupId !== 'string') {
+      throw new Error('Group ID must be a non-empty string');
+    }
+    
+    // Check rate limits
+    const rateLimitCheck = await mondayRateLimiter.canMakeRequest(250);
+    if (!rateLimitCheck.allowed) {
+      if (rateLimitCheck.reason === 'DAILY_LIMIT_EXCEEDED') {
+        throw new Error(`Daily API limit exceeded. Reset time: ${rateLimitCheck.resetTime}`);
+      } else if (rateLimitCheck.reason === 'COMPLEXITY_BUDGET_EXHAUSTED') {
+        await mondayRateLimiter.waitForRateLimit(60000);
+      }
+    }
+    
     try {
       return await this._executeWithRetry(async () => {
         const mutation = `
           mutation {
-            move_item_to_group(item_id: ${itemId}, group_id: "${groupId}") {
+            move_item_to_group(item_id: ${itemIdValidation.sanitized}, group_id: "${groupId}") {
               id
               group {
                 id
@@ -282,12 +427,21 @@ export class MondayApiClient {
           }
         `;
         
+        // Track the API request
+        mondayRateLimiter.trackRequest(250);
+        
         const result = await this._graphqlRequest(mutation);
         return this._standardizeResponse(result.data.move_item_to_group, 'item_moved');
       });
     } catch (error) {
-      log('error', `Failed to move item ${itemId} to group ${groupId}:`, error.message);
-      throw new Error(`Item move failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'moveItemToGroup', 
+        itemId: itemIdValidation.sanitized,
+        groupId
+      });
+      
+      log('error', `Failed to move item ${itemIdValidation.sanitized} to group ${groupId}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
   }
 
@@ -301,12 +455,28 @@ export class MondayApiClient {
   async createBoard(boardName, boardKind = 'public', description = '') {
     this._validateInitialized();
     
+    // Validate board name (similar to item name validation)
+    const nameValidation = mondayValidation.validateItemName(boardName);
+    if (!nameValidation.valid) {
+      throw new Error(`Board name validation failed: ${nameValidation.message}`);
+    }
+    
+    // Check rate limits
+    const rateLimitCheck = await mondayRateLimiter.canMakeRequest(800); // Board creation is more complex
+    if (!rateLimitCheck.allowed) {
+      if (rateLimitCheck.reason === 'DAILY_LIMIT_EXCEEDED') {
+        throw new Error(`Daily API limit exceeded. Reset time: ${rateLimitCheck.resetTime}`);
+      } else if (rateLimitCheck.reason === 'COMPLEXITY_BUDGET_EXHAUSTED') {
+        await mondayRateLimiter.waitForRateLimit(60000);
+      }
+    }
+    
     try {
       return await this._executeWithRetry(async () => {
         const mutation = `
           mutation {
             create_board(
-              board_name: "${boardName.replace(/"/g, '\\"')}",
+              board_name: "${nameValidation.sanitized.replace(/"/g, '\\"')}",
               board_kind: ${boardKind}
               ${description ? `, description: "${description.replace(/"/g, '\\"')}"` : ''}
             ) {
@@ -318,12 +488,20 @@ export class MondayApiClient {
           }
         `;
         
+        // Track the API request
+        mondayRateLimiter.trackRequest(800);
+        
         const result = await this._graphqlRequest(mutation);
         return this._standardizeResponse(result.data.create_board, 'board_created');
       });
     } catch (error) {
-      log('error', `Failed to create board "${boardName}":`, error.message);
-      throw new Error(`Board creation failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'createBoard', 
+        boardName: nameValidation.sanitized
+      });
+      
+      log('error', `Failed to create board "${nameValidation.sanitized}":`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
   }
 
@@ -442,30 +620,68 @@ export class MondayApiClient {
    * @returns {Promise<Object>} API response
    */
   async _graphqlRequest(query) {
-    const response = await fetch(this.baseUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': this.apiKey
-      },
-      body: JSON.stringify({ query })
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        // Rate limit hit
-        throw new Error('RATE_LIMIT_EXCEEDED');
-      }
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const data = await response.json();
+    // Track concurrent request
+    mondayRateLimiter.trackConcurrentRequest(true);
     
-    if (data.errors && data.errors.length > 0) {
-      throw new Error(`GraphQL Error: ${data.errors[0].message}`);
-    }
+    try {
+      const response = await fetch(this.baseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': this.apiKey
+        },
+        body: JSON.stringify({ query }),
+        timeout: MONDAY_LIMITS.DEFAULT_TIMEOUT
+      });
 
-    return data;
+      if (!response.ok) {
+        if (response.status === 429) {
+          // Rate limit hit - extract retry-after header if available
+          const retryAfter = response.headers.get('Retry-After');
+          const retryDelay = retryAfter ? parseInt(retryAfter) * 1000 : MONDAY_LIMITS.RATE_LIMIT_RETRY_DELAY;
+          throw new Error(`RATE_LIMIT_EXCEEDED:${retryDelay}`);
+        }
+        
+        // Handle other HTTP errors
+        const errorText = await response.text().catch(() => 'Unknown error');
+        throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.errors && data.errors.length > 0) {
+        // Handle GraphQL errors with Monday.com specific error detection
+        const error = data.errors[0];
+        const errorMessage = error.message || 'GraphQL Error';
+        
+        // Check for complexity budget exhaustion
+        if (errorMessage.includes('complexity') || errorMessage.includes('budget')) {
+          throw new Error(`COMPLEXITY_BUDGET_EXHAUSTED:${errorMessage}`);
+        }
+        
+        // Check for daily limit exceeded
+        if (errorMessage.includes('daily') || errorMessage.includes('quota')) {
+          throw new Error(`DAILY_LIMIT_EXCEEDED:${errorMessage}`);
+        }
+        
+        throw new Error(`GraphQL Error: ${errorMessage}`);
+      }
+
+      return data;
+      
+    } catch (error) {
+      // Handle timeout errors
+      if (error.name === 'AbortError' || error.message.includes('timeout')) {
+        throw new Error('NETWORK_TIMEOUT:Request timed out');
+      }
+      
+      // Re-throw other errors as-is for higher-level handling
+      throw error;
+      
+    } finally {
+      // Always decrement concurrent request counter
+      mondayRateLimiter.trackConcurrentRequest(false);
+    }
   }
 
   /**
@@ -496,10 +712,26 @@ export class MondayApiClient {
       } catch (error) {
         lastError = error;
         
-        // Handle rate limiting
-        if (error.message === 'RATE_LIMIT_EXCEEDED') {
-          log('warn', `Rate limit exceeded, waiting ${this.rateLimitDelay}ms before retry...`);
-          await this._sleep(this.rateLimitDelay);
+        // Handle rate limiting with specific retry delays
+        if (error.message.startsWith('RATE_LIMIT_EXCEEDED')) {
+          const retryDelay = error.message.split(':')[1] || MONDAY_LIMITS.RATE_LIMIT_RETRY_DELAY;
+          log('warn', `Rate limit exceeded, waiting ${retryDelay}ms before retry...`);
+          await this._sleep(parseInt(retryDelay));
+          continue;
+        }
+        
+        // Handle complexity budget exhaustion
+        if (error.message.startsWith('COMPLEXITY_BUDGET_EXHAUSTED')) {
+          log('warn', `Complexity budget exhausted, waiting 60 seconds before retry...`);
+          await this._sleep(60000);
+          continue;
+        }
+        
+        // Handle network timeouts
+        if (error.message.startsWith('NETWORK_TIMEOUT')) {
+          const delay = Math.min(this.retryDelay * Math.pow(2, attempt - 1), MONDAY_LIMITS.RETRY_DELAY_MAX);
+          log('warn', `Network timeout, retrying in ${delay}ms...`);
+          await this._sleep(delay);
           continue;
         }
         
@@ -533,7 +765,8 @@ export class MondayApiClient {
       message.includes('not found') ||
       message.includes('invalid') ||
       message.includes('bad request') ||
-      message.includes('graphql error')
+      message.includes('daily_limit_exceeded') ||
+      (message.includes('graphql error') && !message.includes('server error'))
     );
   }
 

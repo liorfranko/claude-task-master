@@ -1,4 +1,5 @@
-import { log, readJSON, isSilentMode } from '../utils.js';
+import { log, isSilentMode } from '../utils.js';
+import { persistenceManager } from '../persistence-manager.js';
 import {
 	startLoadingIndicator,
 	stopLoadingIndicator,
@@ -32,8 +33,11 @@ async function expandAllTasks(
 	context = {},
 	outputFormat = 'text' // Assume text default for CLI
 ) {
-	const { session, mcpLog } = context;
+	const { session, mcpLog, projectRoot } = context;
 	const isMCPCall = !!mcpLog; // Determine if called from MCP
+
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
 
 	// Use mcpLog if available, otherwise use the default console log wrapper respecting silent mode
 	const logger =
@@ -69,7 +73,7 @@ async function expandAllTasks(
 
 	try {
 		logger.info(`Reading tasks from ${tasksPath}`);
-		const data = readJSON(tasksPath);
+		const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 		if (!data || !data.tasks) {
 			throw new Error(`Invalid tasks data in ${tasksPath}`);
 		}
