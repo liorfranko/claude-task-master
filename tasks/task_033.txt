@@ -1,44 +1,25 @@
 # Task ID: 33
-# Title: Create and Integrate Windsurf Rules Document from MDC Files
-# Status: done
-# Dependencies: None
+# Title: Test Environment Variable Loading Explicitly
+# Status: pending
+# Dependencies: 1, 32
 # Priority: medium
-# Description: Develop functionality to generate a .windsurfrules document by combining and refactoring content from three primary .mdc files used for Cursor Rules, ensuring it's properly integrated into the initialization pipeline.
+# Description: Conduct comprehensive testing to verify that environment variables are loaded correctly and explicitly across all application modules, particularly for Monday.com integration configuration.
 # Details:
-This task involves creating a mechanism to generate a Windsurf-specific rules document by combining three existing MDC (Markdown Content) files that are currently used for Cursor Rules. The implementation should:
+Create thorough tests to validate that environment variables are being loaded properly and explicitly throughout the application. This involves testing different environment loading scenarios including:
 
-1. Identify and locate the three primary .mdc files used for Cursor Rules
-2. Extract content from these files and merge them into a single document
-3. Refactor the content to make it Windsurf-specific, replacing Cursor-specific terminology and adapting guidelines as needed
-4. Create a function that generates a .windsurfrules document from this content
-5. Integrate this function into the initialization pipeline
-6. Implement logic to check if a .windsurfrules document already exists:
-   - If it exists, append the new content to it
-   - If it doesn't exist, create a new document
-7. Ensure proper error handling for file operations
-8. Add appropriate logging to track the generation and modification of the .windsurfrules document
+1. **Environment Variable Detection**: Test that all required environment variables (MONDAY_API_TOKEN, MONDAY_BOARD_ID, etc.) are properly detected and loaded at application startup. Create test cases for missing variables, invalid values, and proper fallback mechanisms.
 
-The implementation should be modular and maintainable, with clear separation of concerns between content extraction, refactoring, and file operations.
+2. **Explicit Loading Verification**: Implement tests that explicitly verify environment variable loading by temporarily modifying or removing environment files (.env, .env.local, .env.test) and ensuring the application handles these scenarios gracefully. Test both dotenv loading and system environment variable precedence.
+
+3. **Configuration Module Testing**: If a configuration module exists, test that it properly loads and validates environment variables. Verify that configuration values are accessible throughout the application and that sensitive values are properly handled.
+
+4. **Monday.com Integration Environment Testing**: Specifically test that Monday.com API credentials and configuration are loaded correctly from environment variables. Verify that the API client can authenticate using environment-loaded credentials.
+
+5. **Cross-Environment Testing**: Test environment variable loading across different environments (development, testing, production) to ensure consistency and proper isolation.
+
+6. **Error Handling**: Test scenarios where environment variables are malformed, missing, or contain invalid values, ensuring the application provides clear error messages and fails gracefully.
+
+Include tests for environment variable validation, type conversion (strings to numbers/booleans), and security considerations like masking sensitive values in logs.
 
 # Test Strategy:
-Testing should verify both the content generation and the integration with the initialization pipeline:
-
-1. Unit Tests:
-   - Test the content extraction function with mock .mdc files
-   - Test the content refactoring function to ensure Cursor-specific terms are properly replaced
-   - Test the file operation functions with mock filesystem
-
-2. Integration Tests:
-   - Test the creation of a new .windsurfrules document when none exists
-   - Test appending to an existing .windsurfrules document
-   - Test the complete initialization pipeline with the new functionality
-
-3. Manual Verification:
-   - Inspect the generated .windsurfrules document to ensure content is properly combined and refactored
-   - Verify that Cursor-specific terminology has been replaced with Windsurf-specific terminology
-   - Run the initialization process multiple times to verify idempotence (content isn't duplicated on multiple runs)
-
-4. Edge Cases:
-   - Test with missing or corrupted .mdc files
-   - Test with an existing but empty .windsurfrules document
-   - Test with an existing .windsurfrules document that already contains some of the content
+1. Create unit tests that mock different environment variable scenarios and verify proper loading behavior. 2. Implement integration tests that start the application with various environment configurations and validate functionality. 3. Test environment variable precedence by setting values in multiple locations (.env files, system environment, etc.) and verifying correct priority. 4. Validate that Monday.com integration works correctly with environment-loaded credentials by performing actual API calls in a test environment. 5. Test error scenarios by temporarily removing or corrupting environment files and verifying appropriate error handling. 6. Use environment variable validation tools or custom validators to ensure all required variables are present and properly formatted. 7. Verify that sensitive environment variables are not exposed in logs or error messages during testing.

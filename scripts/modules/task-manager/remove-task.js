@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-import { log, readJSON, writeJSON } from '../utils.js';
+import { log } from '../utils.js';
+import { persistenceManager } from '../persistence-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 import taskExists from './task-exists.js';
 
@@ -9,9 +10,12 @@ import taskExists from './task-exists.js';
  * Removes one or more tasks or subtasks from the tasks file
  * @param {string} tasksPath - Path to the tasks file
  * @param {string} taskIds - Comma-separated string of task/subtask IDs to remove (e.g., '5,6.1,7')
+ * @param {Object} options - Additional options (projectRoot, session for persistence context)
  * @returns {Object} Result object with success status, messages, and removed task info
  */
-async function removeTask(tasksPath, taskIds) {
+async function removeTask(tasksPath, taskIds, options = {}) {
+	const { projectRoot, session } = options;
+	
 	const results = {
 		success: true,
 		messages: [],
@@ -30,8 +34,11 @@ async function removeTask(tasksPath, taskIds) {
 	}
 
 	try {
-		// Read the tasks file ONCE before the loop
-		const data = readJSON(tasksPath);
+		// Initialize persistence manager with project context
+		await persistenceManager.initialize(projectRoot, session);
+		
+		// Read the tasks file ONCE before the loop using persistence manager
+		const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 		if (!data || !data.tasks) {
 			throw new Error(`No valid tasks found in ${tasksPath}`);
 		}
@@ -145,24 +152,26 @@ async function removeTask(tasksPath, taskIds) {
 				}
 			});
 
-			// Save the updated tasks file ONCE
-			writeJSON(tasksPath, data);
+			// Save the updated tasks file ONCE using persistence manager
+			await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
 
-			// Delete task files AFTER saving tasks.json
-			for (const taskIdNum of tasksToDeleteFiles) {
-				const taskFileName = path.join(
-					path.dirname(tasksPath),
-					`task_${taskIdNum.toString().padStart(3, '0')}.txt`
-				);
-				if (fs.existsSync(taskFileName)) {
-					try {
-						fs.unlinkSync(taskFileName);
-						results.messages.push(`Deleted task file: ${taskFileName}`);
-					} catch (unlinkError) {
-						const unlinkMsg = `Failed to delete task file ${taskFileName}: ${unlinkError.message}`;
-						results.errors.push(unlinkMsg);
-						results.success = false;
-						log('warn', unlinkMsg);
+			// Delete task files AFTER saving tasks.json (only for local mode with file system)
+			if (persistenceManager.isUsingLocal()) {
+				for (const taskIdNum of tasksToDeleteFiles) {
+					const taskFileName = path.join(
+						path.dirname(tasksPath),
+						`task_${taskIdNum.toString().padStart(3, '0')}.txt`
+					);
+					if (fs.existsSync(taskFileName)) {
+						try {
+							fs.unlinkSync(taskFileName);
+							results.messages.push(`Deleted task file: ${taskFileName}`);
+						} catch (unlinkError) {
+							const unlinkMsg = `Failed to delete task file ${taskFileName}: ${unlinkError.message}`;
+							results.errors.push(unlinkMsg);
+							results.success = false;
+							log('warn', unlinkMsg);
+						}
 					}
 				}
 			}
@@ -190,7 +199,8 @@ async function removeTask(tasksPath, taskIds) {
 			success: results.success,
 			message: finalMessage || 'No tasks were removed.',
 			error: finalError || null,
-			removedTasks: results.removedTasks
+			removedTasks: results.removedTasks,
+			persistenceMode: persistenceManager.getStatus().mode
 		};
 	} catch (error) {
 		// Catch errors from reading file or other initial setup
@@ -198,7 +208,7 @@ async function removeTask(tasksPath, taskIds) {
 		return {
 			success: false,
 			message: '',
-			error: `Operation failed: ${error.message}`,
+			error: error.message,
 			removedTasks: []
 		};
 	}

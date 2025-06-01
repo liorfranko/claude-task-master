@@ -1601,7 +1601,11 @@ function registerCommands(programInstance) {
 				? dependencyId
 				: parseInt(dependencyId, 10);
 
-			await addDependency(tasksPath, formattedTaskId, formattedDependencyId);
+			// Get project root for persistence context
+			const projectRoot = findProjectRoot() || '.';
+			const context = { projectRoot };
+
+			await addDependency(tasksPath, formattedTaskId, formattedDependencyId, context);
 		});
 
 	// remove-dependency command
@@ -1632,7 +1636,11 @@ function registerCommands(programInstance) {
 				? dependencyId
 				: parseInt(dependencyId, 10);
 
-			await removeDependency(tasksPath, formattedTaskId, formattedDependencyId);
+			// Get project root for persistence context
+			const projectRoot = findProjectRoot() || '.';
+			const context = { projectRoot };
+
+			await removeDependency(tasksPath, formattedTaskId, formattedDependencyId, context);
 		});
 
 	// validate-dependencies command
@@ -1643,7 +1651,11 @@ function registerCommands(programInstance) {
 		)
 		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
 		.action(async (options) => {
-			await validateDependenciesCommand(options.file);
+			// Get project root for persistence context
+			const projectRoot = findProjectRoot() || '.';
+			const context = { projectRoot };
+			
+			await validateDependenciesCommand(options.file, {}, context);
 		});
 
 	// fix-dependencies command
@@ -1652,7 +1664,11 @@ function registerCommands(programInstance) {
 		.description(`Fix invalid dependencies automatically${chalk.reset('')}`)
 		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
 		.action(async (options) => {
-			await fixDependenciesCommand(options.file);
+			// Get project root for persistence context
+			const projectRoot = findProjectRoot() || '.';
+			const context = { projectRoot };
+			
+			await fixDependenciesCommand(options.file, {}, context);
 		});
 
 	// complexity-report command

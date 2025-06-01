@@ -12,7 +12,8 @@ import {
 	stopLoadingIndicator,
 	displayAiUsageSummary
 } from '../ui.js';
-import { readJSON, writeJSON, log as consoleLog, truncate } from '../utils.js';
+import { log as consoleLog, truncate } from '../utils.js';
+import { persistenceManager } from '../persistence-manager.js';
 import { generateObjectService } from '../ai-services-unified.js';
 import { getDefaultPriority } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
@@ -69,6 +70,9 @@ async function addTask(
 	const { session, mcpLog, projectRoot, commandName, outputType } = context;
 	const isMCP = !!mcpLog;
 
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
+
 	// Create a consistent logFn object regardless of context
 	const logFn = isMCP
 		? mcpLog // Use MCP logger if provided
@@ -84,7 +88,7 @@ async function addTask(
 	const effectivePriority = priority || getDefaultPriority(projectRoot);
 
 	logFn.info(
-		`Adding new task with prompt: "${prompt}", Priority: ${effectivePriority}, Dependencies: ${dependencies.join(', ') || 'None'}, Research: ${useResearch}, ProjectRoot: ${projectRoot}`
+		`Adding new task with prompt: "${prompt}", Priority: ${effectivePriority}, Dependencies: ${dependencies.join(', ') || 'None'}, Research: ${useResearch}, ProjectRoot: ${projectRoot}, Persistence: ${persistenceManager.getStatus().mode}`
 	);
 
 	let loadingIndicator = null;
@@ -161,8 +165,8 @@ async function addTask(
 	}
 
 	try {
-		// Read the existing tasks
-		let data = readJSON(tasksPath);
+		// Read the existing tasks using persistence manager
+		let data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 
 		// If tasks.json doesn't exist or is invalid, create a new one
 		if (!data || !data.tasks) {
@@ -172,7 +176,7 @@ async function addTask(
 				tasks: []
 			};
 			// Ensure the directory exists and write the new file
-			writeJSON(tasksPath, data);
+			await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
 			report('Created new tasks.json file with empty tasks array.', 'info');
 		}
 
@@ -201,15 +205,11 @@ async function addTask(
 		});
 
 		if (invalidDeps.length > 0) {
-			report(
-				`The following dependencies do not exist or are invalid: ${invalidDeps.join(', ')}`,
-				'warn'
-			);
-			report('Removing invalid dependencies...', 'info');
-			dependencies = dependencies.filter(
-				(depId) => !invalidDeps.includes(depId)
+			throw new Error(
+				`Invalid dependency IDs: ${invalidDeps.join(', ')}. These tasks do not exist.`
 			);
 		}
+
 		// Ensure dependencies are numbers
 		const numericDependencies = dependencies.map((dep) => parseInt(dep, 10));
 
@@ -1028,7 +1028,7 @@ async function addTask(
 
 		report('DEBUG: Writing tasks.json...', 'debug');
 		// Write the updated tasks to the file
-		writeJSON(tasksPath, data);
+		await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
 		report('DEBUG: tasks.json written.', 'debug');
 
 		// Generate markdown task files

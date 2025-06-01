@@ -7,19 +7,16 @@ import { z } from 'zod'; // Keep Zod for post-parse validation
 
 import {
 	log as consoleLog,
-	readJSON,
-	writeJSON,
-	truncate,
-	isSilentMode
+	truncate
 } from '../utils.js';
-
+import { persistenceManager } from '../persistence-manager.js';
 import {
+	displayBanner,
 	getStatusWithColor,
 	startLoadingIndicator,
 	stopLoadingIndicator,
 	displayAiUsageSummary
 } from '../ui.js';
-
 import { generateTextService } from '../ai-services-unified.js';
 import {
 	getDebugFlag,
@@ -43,170 +40,79 @@ const updatedTaskSchema = z
 	.strip(); // Allows parsing even if AI adds extra fields, but validation focuses on schema
 
 /**
- * Parses a single updated task object from AI's text response.
- * @param {string} text - Response text from AI.
- * @param {number} expectedTaskId - The ID of the task expected.
- * @param {Function | Object} logFn - Logging function or MCP logger.
- * @param {boolean} isMCP - Flag indicating MCP context.
- * @returns {Object} Parsed and validated task object.
- * @throws {Error} If parsing or validation fails.
+ * Parses AI response text for task update
+ * @param {string} text - AI response text
+ * @param {number} expectedTaskId - Expected task ID for validation
+ * @param {function} logFn - Logging function
+ * @param {boolean} isMCP - Whether we're in MCP mode
+ * @returns {Object|null} Parsed task object or null if parsing fails
  */
 function parseUpdatedTaskFromText(text, expectedTaskId, logFn, isMCP) {
-	// Report helper consistent with the established pattern
+	// Helper function for reporting
 	const report = (level, ...args) => {
-		if (isMCP) {
-			if (typeof logFn[level] === 'function') logFn[level](...args);
-			else logFn.info(...args);
-		} else if (!isSilentMode()) {
+		if (logFn && typeof logFn[level] === 'function') {
+			logFn[level](...args);
+		} else if (logFn && typeof logFn === 'function') {
 			logFn(level, ...args);
+		} else {
+			consoleLog(level, ...args);
 		}
 	};
 
-	report(
-		'info',
-		'Attempting to parse updated task object from text response...'
-	);
-	if (!text || text.trim() === '')
-		throw new Error('AI response text is empty.');
-
-	let cleanedResponse = text.trim();
-	const originalResponseForDebug = cleanedResponse;
-	let parseMethodUsed = 'raw'; // Keep track of which method worked
-
-	// --- NEW Step 1: Try extracting between {} first ---
-	const firstBraceIndex = cleanedResponse.indexOf('{');
-	const lastBraceIndex = cleanedResponse.lastIndexOf('}');
-	let potentialJsonFromBraces = null;
-
-	if (firstBraceIndex !== -1 && lastBraceIndex > firstBraceIndex) {
-		potentialJsonFromBraces = cleanedResponse.substring(
-			firstBraceIndex,
-			lastBraceIndex + 1
-		);
-		if (potentialJsonFromBraces.length <= 2) {
-			potentialJsonFromBraces = null; // Ignore empty braces {}
-		}
-	}
-
-	// If {} extraction yielded something, try parsing it immediately
-	if (potentialJsonFromBraces) {
-		try {
-			const testParse = JSON.parse(potentialJsonFromBraces);
-			// It worked! Use this as the primary cleaned response.
-			cleanedResponse = potentialJsonFromBraces;
-			parseMethodUsed = 'braces';
-		} catch (e) {
-			report(
-				'info',
-				'Content between {} looked promising but failed initial parse. Proceeding to other methods.'
-			);
-			// Reset cleanedResponse to original if brace parsing failed
-			cleanedResponse = originalResponseForDebug;
-		}
-	}
-
-	// --- Step 2: If brace parsing didn't work or wasn't applicable, try code block extraction ---
-	if (parseMethodUsed === 'raw') {
-		const codeBlockMatch = cleanedResponse.match(
-			/```(?:json|javascript)?\s*([\s\S]*?)\s*```/i
-		);
-		if (codeBlockMatch) {
-			cleanedResponse = codeBlockMatch[1].trim();
-			parseMethodUsed = 'codeblock';
-			report('info', 'Extracted JSON content from Markdown code block.');
-		} else {
-			// --- Step 3: If code block failed, try stripping prefixes ---
-			const commonPrefixes = [
-				'json\n',
-				'javascript\n'
-				// ... other prefixes ...
-			];
-			let prefixFound = false;
-			for (const prefix of commonPrefixes) {
-				if (cleanedResponse.toLowerCase().startsWith(prefix)) {
-					cleanedResponse = cleanedResponse.substring(prefix.length).trim();
-					parseMethodUsed = 'prefix';
-					report('info', `Stripped prefix: "${prefix.trim()}"`);
-					prefixFound = true;
-					break;
-				}
-			}
-			if (!prefixFound) {
-				report(
-					'warn',
-					'Response does not appear to contain {}, code block, or known prefix. Attempting raw parse.'
-				);
-			}
-		}
-	}
-
-	// --- Step 4: Attempt final parse ---
-	let parsedTask;
 	try {
-		parsedTask = JSON.parse(cleanedResponse);
-	} catch (parseError) {
-		report('error', `Failed to parse JSON object: ${parseError.message}`);
-		report(
-			'error',
-			`Problematic JSON string (first 500 chars): ${cleanedResponse.substring(0, 500)}`
-		);
-		report(
-			'error',
-			`Original Raw Response (first 500 chars): ${originalResponseForDebug.substring(0, 500)}`
-		);
-		throw new Error(
-			`Failed to parse JSON response object: ${parseError.message}`
-		);
-	}
+		// Clean the text and extract JSON
+		let cleanedText = text.trim();
 
-	if (!parsedTask || typeof parsedTask !== 'object') {
-		report(
-			'error',
-			`Parsed content is not an object. Type: ${typeof parsedTask}`
-		);
-		report(
-			'error',
-			`Parsed content sample: ${JSON.stringify(parsedTask).substring(0, 200)}`
-		);
-		throw new Error('Parsed AI response is not a valid JSON object.');
-	}
+		// Remove common AI response wrapping
+		cleanedText = cleanedText.replace(/^Here(?:'s| is) (?:the )?updated task:?\s*/i, '');
+		cleanedText = cleanedText.replace(/^```json\s*/i, '');
+		cleanedText = cleanedText.replace(/\s*```\s*$/i, '');
+		cleanedText = cleanedText.replace(/^```\s*/i, '');
 
-	// Validate the parsed task object using Zod
-	const validationResult = updatedTaskSchema.safeParse(parsedTask);
-	if (!validationResult.success) {
-		report('error', 'Parsed task object failed Zod validation.');
-		validationResult.error.errors.forEach((err) => {
-			report('error', `  - Field '${err.path.join('.')}': ${err.message}`);
-		});
-		throw new Error(
-			`AI response failed task structure validation: ${validationResult.error.message}`
-		);
-	}
+		// Try to find JSON content
+		const jsonStartIndex = cleanedText.indexOf('{');
+		const jsonEndIndex = cleanedText.lastIndexOf('}');
 
-	// Final check: ensure ID matches expected ID (AI might hallucinate)
-	if (validationResult.data.id !== expectedTaskId) {
-		report(
-			'warn',
-			`AI returned task with ID ${validationResult.data.id}, but expected ${expectedTaskId}. Overwriting ID.`
-		);
-		validationResult.data.id = expectedTaskId; // Enforce correct ID
-	}
+		if (jsonStartIndex === -1 || jsonEndIndex === -1) {
+			throw new Error('No JSON object found in AI response');
+		}
 
-	report('info', 'Successfully validated updated task structure.');
-	return validationResult.data; // Return the validated task data
+		const jsonText = cleanedText.substring(jsonStartIndex, jsonEndIndex + 1);
+		const parsedTask = JSON.parse(jsonText);
+
+		// Validate the parsed task
+		if (!parsedTask || typeof parsedTask !== 'object') {
+			throw new Error('Parsed result is not a valid object');
+		}
+
+		if (!parsedTask.title || !parsedTask.description) {
+			throw new Error('Parsed task missing required fields (title, description)');
+		}
+
+		// Validate ID matches
+		if (parsedTask.id !== expectedTaskId) {
+			report('warn', `AI changed task ID from ${expectedTaskId} to ${parsedTask.id}. Correcting...`);
+			parsedTask.id = expectedTaskId;
+		}
+
+		return parsedTask;
+
+	} catch (error) {
+		report('error', `Failed to parse AI response: ${error.message}`);
+		report('debug', `Raw AI response: ${text}`);
+		return null;
+	}
 }
 
 /**
- * Update a single task by ID using the unified AI service.
+ * Updates a specific task by ID using AI
  * @param {string} tasksPath - Path to the tasks.json file
- * @param {number} taskId - Task ID to update
- * @param {string} prompt - Prompt with new context
- * @param {boolean} [useResearch=false] - Whether to use the research AI role.
- * @param {Object} context - Context object containing session and mcpLog.
- * @param {Object} [context.session] - Session object from MCP server.
- * @param {Object} [context.mcpLog] - MCP logger object.
- * @param {string} [outputFormat='text'] - Output format ('text' or 'json').
- * @returns {Promise<Object|null>} - Updated task data or null if task wasn't updated/found.
+ * @param {number} taskId - ID of the task to update
+ * @param {string} prompt - Description of the changes to make
+ * @param {boolean} useResearch - Whether to use research capabilities
+ * @param {Object} context - Context object containing session and potentially projectRoot
+ * @param {string} outputFormat - Output format ('text' or 'json')
+ * @returns {Promise<Object|null>} Updated task data or null if not updated
  */
 async function updateTaskById(
 	tasksPath,
@@ -217,46 +123,70 @@ async function updateTaskById(
 	outputFormat = 'text'
 ) {
 	const { session, mcpLog, projectRoot } = context;
-	const logFn = mcpLog || consoleLog;
 	const isMCP = !!mcpLog;
 
-	// Use report helper for logging
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
+
+	// Create a consistent logFn object regardless of context
+	const logFn = isMCP
+		? mcpLog // Use MCP logger if provided
+		: {
+				// Create a wrapper around consoleLog for CLI
+				info: (...args) => consoleLog('info', ...args),
+				warn: (...args) => consoleLog('warn', ...args),
+				error: (...args) => consoleLog('error', ...args),
+				debug: (...args) => consoleLog('debug', ...args),
+				success: (...args) => consoleLog('success', ...args)
+			};
+
+	// Helper function for reporting that works in both MCP and CLI modes
 	const report = (level, ...args) => {
-		if (isMCP) {
-			if (typeof logFn[level] === 'function') logFn[level](...args);
-			else logFn.info(...args);
-		} else if (!isSilentMode()) {
+		if (logFn && typeof logFn[level] === 'function') {
+			logFn[level](...args);
+		} else if (logFn && typeof logFn === 'function') {
 			logFn(level, ...args);
+		} else {
+			consoleLog(level, ...args);
 		}
 	};
 
 	try {
-		report('info', `Updating single task ${taskId} with prompt: "${prompt}"`);
-
-		// --- Input Validations (Keep existing) ---
-		if (!Number.isInteger(taskId) || taskId <= 0)
-			throw new Error(
-				`Invalid task ID: ${taskId}. Task ID must be a positive integer.`
-			);
-		if (!prompt || typeof prompt !== 'string' || prompt.trim() === '')
-			throw new Error('Prompt cannot be empty.');
-		if (useResearch && !isApiKeySet('perplexity', session)) {
-			report(
-				'warn',
-				'Perplexity research requested but API key not set. Falling back.'
-			);
-			if (outputFormat === 'text')
-				console.log(
+		// --- Input Validations ---
+		if (!prompt || prompt.trim().length === 0) {
+			throw new Error('Update prompt cannot be empty.');
+		}
+		if (!taskId || isNaN(parseInt(taskId, 10))) {
+			throw new Error('Invalid task ID provided.');
+		}
+		taskId = parseInt(taskId, 10);
+		// Validate research usage
+		if (useResearch) {
+			try {
+				// Test if Perplexity is available in the environment
+				const testResponse = await generateTextService({
+					role: 'research',
+					session: session,
+					projectRoot: projectRoot,
+					systemPrompt: 'Test',
+					prompt: 'Test',
+					commandName: 'test',
+					outputType: isMCP ? 'mcp' : 'cli'
+				});
+			} catch (testError) {
+				report(
+					'warn',
 					chalk.yellow('Perplexity AI not available. Falling back to main AI.')
 				);
-			useResearch = false;
+				useResearch = false;
+			}
 		}
 		if (!fs.existsSync(tasksPath))
 			throw new Error(`Tasks file not found: ${tasksPath}`);
 		// --- End Input Validations ---
 
 		// --- Task Loading and Status Check (Keep existing) ---
-		const data = readJSON(tasksPath);
+		const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 		if (!data || !data.tasks)
 			throw new Error(`No valid tasks found in ${tasksPath}.`);
 		const taskIndex = data.tasks.findIndex((task) => task.id === taskId);
@@ -448,73 +378,86 @@ The changes described in the prompt should be thoughtfully applied to make the t
 						) {
 							report(
 								'warn',
-								`Completed subtask ${compSub.id} was modified or removed. Restoring.`
+								`Completed subtask ${compSub.id} was modified. Restoring original.`
 							);
-							// Remove potentially modified version
-							updatedTask.subtasks = updatedTask.subtasks.filter(
-								(st) => st.id !== compSub.id
+							const subIndex = updatedTask.subtasks.findIndex(
+								(st) => st.id === compSub.id
 							);
-							// Add back original
-							updatedTask.subtasks.push(compSub);
+							if (subIndex !== -1) {
+								updatedTask.subtasks[subIndex] = compSub;
+							} else {
+								updatedTask.subtasks.push(compSub);
+							}
 						}
-					});
-					// Deduplicate just in case
-					const subtaskIds = new Set();
-					updatedTask.subtasks = updatedTask.subtasks.filter((st) => {
-						if (!subtaskIds.has(st.id)) {
-							subtaskIds.add(st.id);
-							return true;
-						}
-						report('warn', `Duplicate subtask ID ${st.id} removed.`);
-						return false;
 					});
 				}
 			}
-			// --- End Task Validation/Correction ---
+			// --- End Task Validation ---
 
-			// --- Update Task Data (Keep existing) ---
+			// --- Update Task in Data (Keep existing) ---
 			data.tasks[taskIndex] = updatedTask;
-			// --- End Update Task Data ---
+			// --- End Update ---
 
-			// --- Write File and Generate (Unchanged) ---
-			writeJSON(tasksPath, data);
-			report('success', `Successfully updated task ${taskId}`);
-			await generateTaskFiles(tasksPath, path.dirname(tasksPath));
-			// --- End Write File ---
+			// --- Save to File ---
+			await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
+			// --- End Save ---
 
-			// --- Display CLI Telemetry ---
-			if (outputFormat === 'text' && aiServiceResponse.telemetryData) {
-				displayAiUsageSummary(aiServiceResponse.telemetryData, 'cli'); // <<< ADD display
+			// --- Generate Task Files ---
+			try {
+				await generateTaskFiles(tasksPath, path.dirname(tasksPath), {
+					mcpLog: logFn
+				});
+				report('info', 'Task files updated successfully.');
+			} catch (genError) {
+				report('warn', `Failed to update task files: ${genError.message}`);
 			}
+			// --- End Generate ---
 
-			// --- Return Success with Telemetry ---
+			// --- Display Results (CLI Only) ---
+			if (outputFormat === 'text') {
+				console.log(
+					boxen(
+						chalk.white.bold(`Task ${taskId} Updated Successfully`) +
+							'\n\n' +
+							chalk.white(`Updated Title: ${updatedTask.title}`) +
+							'\n' +
+							chalk.white(`Status: ${getStatusWithColor(updatedTask.status)}`) +
+							'\n' +
+							chalk.white(`Dependencies: ${updatedTask.dependencies?.length || 0}`) +
+							'\n' +
+							chalk.white(`Subtasks: ${updatedTask.subtasks?.length || 0}`),
+						{ padding: 1, borderColor: 'green', borderStyle: 'round' }
+					)
+				);
+
+				// Display AI Usage Summary if available
+				if (aiServiceResponse && aiServiceResponse.telemetryData) {
+					displayAiUsageSummary(aiServiceResponse.telemetryData, 'cli');
+				}
+			}
+			// --- End Display ---
+
 			return {
-				updatedTask: updatedTask, // Return the updated task object
-				telemetryData: aiServiceResponse.telemetryData // <<< ADD telemetryData
+				success: true,
+				updatedTask: updatedTask,
+				telemetryData: aiServiceResponse?.telemetryData || null,
+				persistenceMode: persistenceManager.getStatus().mode
 			};
-		} catch (error) {
-			// Catch errors from generateTextService
-			if (loadingIndicator) stopLoadingIndicator(loadingIndicator);
-			report('error', `Error during AI service call: ${error.message}`);
-			if (error.message.includes('API key')) {
-				report('error', 'Please ensure API keys are configured correctly.');
-			}
-			throw error; // Re-throw error
+		} catch (serviceError) {
+			if (loadingIndicator)
+				stopLoadingIndicator(loadingIndicator, 'Update failed.');
+			throw serviceError;
 		}
 	} catch (error) {
-		// General error catch
-		// --- General Error Handling (Keep existing) ---
 		report('error', `Error updating task: ${error.message}`);
-		if (outputFormat === 'text') {
+		if (outputFormat === 'text' && !isMCP) {
 			console.error(chalk.red(`Error: ${error.message}`));
-			// ... helpful hints ...
-			if (getDebugFlag(session)) console.error(error);
-			process.exit(1);
-		} else {
-			throw error; // Re-throw for MCP
 		}
-		return null; // Indicate failure in CLI case if process doesn't exit
-		// --- End General Error Handling ---
+		// Let MCP mode handle the error appropriately
+		if (isMCP) {
+			throw error;
+		}
+		return null;
 	}
 }
 

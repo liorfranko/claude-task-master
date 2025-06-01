@@ -1,18 +1,82 @@
 # Task ID: 3
-# Title: Implement Basic Task Operations
+# Title: Develop Data Transformation Layer
 # Status: done
-# Dependencies: 1
+# Dependencies: 1, 2
 # Priority: high
-# Description: Create core functionality for managing tasks including listing, creating, updating, and deleting tasks.
+# Description: Create utility functions to transform between Task Master data structures and Monday.com item representations.
 # Details:
-Implement the following task operations:
-- List tasks with filtering options
-- Create new tasks with required fields
-- Update existing task properties
-- Delete tasks
-- Change task status (pending/done/deferred)
-- Handle dependencies between tasks
-- Manage task priorities
+Implement a data transformation layer in `monday-data-transformer.js` that handles bidirectional conversion between Task Master task objects and Monday.com items. Create functions: `transformTaskToMondayColumns(task)` to convert task properties to Monday column values, `transformMondayItemToTask(item, schema)` to convert Monday items back to task objects, `transformMondayItemsToTasks(items, schema)` for batch conversions, and `validateTransformedData(original, transformed)` to ensure data integrity during transformations. Handle special cases like dependencies (using board relation columns), subtasks (using parent references), and status mapping. Implement proper type conversions and handle null/undefined values gracefully. Ensure all Task Master properties map correctly to Monday.com columns according to the mapping defined in the PRD.
 
 # Test Strategy:
-Test each operation with valid and invalid inputs. Verify that dependencies are properly tracked and that status changes are reflected correctly in the tasks.json file.
+Create comprehensive unit tests for all transformation functions with various task structures. Test edge cases like empty fields, special characters, and maximum field lengths. Verify bidirectional transformations maintain data integrity. Test with complex task structures including nested subtasks and multiple dependencies. Validate that all Task Master properties are correctly preserved during round-trip transformations.
+
+# Subtasks:
+## 1. Define Data Mapping Schema [done]
+### Dependencies: None
+### Description: Establish a comprehensive mapping between Task Master task object properties and Monday.com item columns, including handling of dependencies, subtasks, and status fields as specified in the PRD.
+### Details:
+Document all Task Master fields and their corresponding Monday.com column types, including special cases such as board relation columns for dependencies and parent references for subtasks.
+<info added on 2025-05-31T19:50:11.480Z>
+For the "Connect Boards Column" implementation, we need to establish a proper relationship between tasks and subtasks in Monday.com. The Connect Boards Column will be used to create parent-child relationships between tasks.
+
+The Connect Boards Column allows linking items between different boards, creating a two-way connection that maintains the hierarchical structure of our Task Master data model. This column type must be manually created (cannot be done via API) and configured to establish proper parent-task relationships.
+
+Implementation notes:
+- Add Connect Boards Column to link parent tasks to subtasks
+- Enable two-way connections to maintain bidirectional relationships
+- Mirror columns will be used to pull relevant information from parent tasks
+- For automation purposes, create text columns to store mirrored data that can be used in workflows
+- Document the limitation that Connect Boards columns cannot be created or connected through the API and must be done manually
+</info added on 2025-05-31T19:50:11.480Z>
+
+## 2. Implement Task to Monday.com Transformation [done]
+### Dependencies: 3.1
+### Description: Develop the `transformTaskToMondayColumns(task)` function to convert Task Master task objects into Monday.com column value representations, ensuring correct type conversions and handling of null/undefined values.
+### Details:
+Utilize the mapping schema to transform each property, including special handling for dependencies, subtasks, and status. Ensure output matches Monday.com API requirements.
+<info added on 2025-05-31T19:50:40.746Z>
+✅ Task to Monday.com Transformation Complete - Subtask 3.2 Implementation Success!
+
+Implementation of the `transformTaskToMondayColumns(task)` function is complete, providing robust conversion of Task Master objects to Monday.com API-compatible column values and metadata. The function leverages the defined mapping schema, supports type conversions (including status and priority to Monday.com IDs), handles dependencies and complex IDs, and ensures group assignment and item naming align with Monday.com requirements. Comprehensive error handling and edge case management are in place, with all transformation scenarios validated through extensive testing. The solution is production-ready and fully supports all Task Master task types for seamless integration with Monday.com.
+</info added on 2025-05-31T19:50:40.746Z>
+
+## 3. Implement Monday.com to Task Transformation [done]
+### Dependencies: 3.1
+### Description: Develop the `transformMondayItemToTask(item, schema)` function to convert a Monday.com item into a Task Master task object, applying the mapping schema and handling type conversions.
+### Details:
+Parse Monday.com item data, map columns back to Task Master properties, and handle special cases such as dependencies and subtasks.
+<info added on 2025-05-31T19:51:06.175Z>
+✅ Monday.com to Task Master reverse transformation logic implemented and validated. The `transformMondayItemToTask(item, schema)` function now fully reconstructs Task Master task objects from Monday.com items, including accurate field mapping, type conversions, dependency and subtask handling, and robust fallback logic for missing fields. All core and edge cases have been tested, ensuring reliable integration for both simple and complex Monday.com data scenarios.
+</info added on 2025-05-31T19:51:06.175Z>
+
+## 4. Implement Batch Transformation and Data Validation [done]
+### Dependencies: 3.2, 3.3
+### Description: Create `transformMondayItemsToTasks(items, schema)` for batch conversions and `validateTransformedData(original, transformed)` to ensure data integrity during transformations.
+### Details:
+Ensure batch processing is efficient and validation checks for data consistency, type correctness, and completeness.
+<info added on 2025-05-31T19:51:33.749Z>
+Batch transformation and data validation for Monday.com item-to-task processing have been fully implemented and tested. The new system efficiently processes multiple Monday.com items in a single batch operation, automatically sorts results by task ID, and provides detailed tracking of both successful transformations and individual errors. Comprehensive data validation supports both transformation directions, ensuring required fields, correct data types, and completeness, with detailed error and warning reporting. Round-trip transformation tests confirm data integrity and preservation of all essential Task Master properties. The batch processing logic isolates errors to individual items, preventing failures from impacting the entire batch, and delivers robust metrics on transformation success rates. This production-ready solution ensures high performance and reliability for large-scale data synchronization between Monday.com and Task Master.
+</info added on 2025-05-31T19:51:33.749Z>
+
+## 5. Handle Special Cases and Edge Conditions [done]
+### Dependencies: 3.2, 3.3, 3.4
+### Description: Implement logic for handling special cases such as dependencies (board relation columns), subtasks (parent references), status mapping, and robust handling of null/undefined values.
+### Details:
+Ensure all edge cases are covered according to the PRD and Monday.com API documentation, and update transformation functions as needed.
+<info added on 2025-05-31T19:52:14.355Z>
+✅ Special Cases and Edge Conditions Complete - Subtask 3.5 Implementation Success!
+
+Implementation now includes robust handling for all special cases and edge conditions as outlined in the PRD and Monday.com API documentation. This covers:
+
+- Dependencies: Seamless conversion between array and string formats, support for both numeric and dotted IDs, and graceful handling of empty or null values.
+- Subtask Parent References: Accurate mapping using the parent_task column, preservation of dotted subtask IDs, automatic hierarchy detection, and maintenance of bidirectional parent-child relationships.
+- Status Mapping: Comprehensive mapping for all Task Master status values, case-insensitive handling, defaulting unknown statuses to 'pending', and compatibility with Monday.com status IDs.
+- Null/Undefined Values: Sensible defaults for nulls, fallback logic for required fields, omission of empty optional fields, and robust type safety.
+- Invalid Input Protection: Descriptive error handling for null or malformed inputs, strict type and field validation, and resilience against incomplete Monday.com items.
+- Data Integrity: Round-trip transformation validation, detailed field comparison, loss detection, and a warning system for potential data issues.
+- Performance: Batch error isolation, efficient ID-based sorting, memory management for large datasets, and asynchronous processing support.
+- Test Coverage: All edge cases, invalid inputs, round-trip transformations, null/undefined handling, and type validation are fully tested and passing.
+
+All transformation functions are updated to ensure comprehensive coverage and reliability for all edge conditions, with full alignment to Monday.com API requirements and best practices.
+</info added on 2025-05-31T19:52:14.355Z>
+

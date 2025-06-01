@@ -1,5 +1,6 @@
 import path from 'path';
-import { log, readJSON, writeJSON } from '../utils.js';
+import { log } from '../utils.js';
+import { persistenceManager } from '../persistence-manager.js';
 import { isTaskDependentOn } from '../task-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 
@@ -9,19 +10,26 @@ import generateTaskFiles from './generate-task-files.js';
  * @param {string} sourceId - ID of the task/subtask to move (e.g., '5' or '5.2')
  * @param {string} destinationId - ID of the destination (e.g., '7' or '7.3')
  * @param {boolean} generateFiles - Whether to regenerate task files after moving
+ * @param {Object} context - Context object containing session and projectRoot for persistence
  * @returns {Object} Result object with moved task details
  */
 async function moveTask(
 	tasksPath,
 	sourceId,
 	destinationId,
-	generateFiles = true
+	generateFiles = true,
+	context = {}
 ) {
+	const { session, projectRoot } = context;
+
 	try {
+		// Initialize persistence manager with project context
+		await persistenceManager.initialize(projectRoot, session);
+
 		log('info', `Moving task/subtask ${sourceId} to ${destinationId}...`);
 
-		// Read the existing tasks
-		const data = readJSON(tasksPath);
+		// Read the existing tasks using persistence manager
+		const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 		if (!data || !data.tasks) {
 			throw new Error(`Invalid or missing tasks file at ${tasksPath}`);
 		}
@@ -243,8 +251,8 @@ async function moveTask(
 			}
 		}
 
-		// Write the updated tasks back to the file
-		writeJSON(tasksPath, data);
+		// Write the updated tasks back to the file using persistence manager
+		await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
 
 		// Generate task files if requested
 		if (generateFiles) {
