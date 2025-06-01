@@ -1,0 +1,82 @@
+# Task ID: 107
+# Title: Extend Configuration System for Persistence Modes
+# Status: pending
+# Dependencies: 104, 106
+# Priority: high
+# Description: Extend the existing configuration system to support persistence mode settings, Monday.com board configuration, and environment variable integration.
+# Details:
+Modify the existing configuration system to:  
+1. Add persistence mode settings (local, monday, hybrid)  
+2. Support Monday.com board configuration  
+3. Add environment variable integration for API tokens  
+4. Implement validation for configuration settings  
+5. Add migration helpers for configuration changes  
+
+Extend `.taskmasterconfig` schema:  
+```javascript
+const configSchema = {
+  // Existing schema properties
+  persistence: {
+    mode: String, // 'local', 'monday', or 'hybrid'
+    mondayConfig: {
+      boardId: String,
+      apiToken: String, // Can be direct token or env:MONDAY_API_TOKEN
+      columnMapping: {
+        status: String,
+        title: String,
+        description: String,
+        priority: String
+      },
+      syncSettings: {
+        conflictResolution: String, // 'manual', 'local-wins', or 'monday-wins'
+        syncInterval: Number, // in seconds
+        syncSubtasks: Boolean
+      }
+    }
+  }
+};
+```
+
+Implement configuration CLI commands:  
+```javascript
+function setModeCommand(args) {
+  const mode = args['set-mode'];
+  if (!['local', 'monday', 'hybrid'].includes(mode)) {
+    console.error('Invalid mode. Must be one of: local, monday, hybrid');
+    return;
+  }
+  
+  const config = getConfig();
+  config.persistence = config.persistence || {};
+  config.persistence.mode = mode;
+  
+  // If switching to monday or hybrid, ensure board ID is set
+  if ((mode === 'monday' || mode === 'hybrid') && args['board-id']) {
+    config.persistence.mondayConfig = config.persistence.mondayConfig || {};
+    config.persistence.mondayConfig.boardId = args['board-id'];
+  }
+  
+  saveConfig(config);
+  console.log(`Persistence mode set to: ${mode}`);
+}
+```
+
+Add environment variable support:  
+```javascript
+function resolveEnvVars(config) {
+  if (config.persistence?.mondayConfig?.apiToken?.startsWith('env:')) {
+    const envVar = config.persistence.mondayConfig.apiToken.substring(4);
+    config.persistence.mondayConfig.apiToken = process.env[envVar];
+  }
+  return config;
+}
+```
+
+# Test Strategy:
+1. Unit tests for configuration schema validation  
+2. Test setting and retrieving different persistence modes  
+3. Test environment variable resolution  
+4. Test CLI commands for configuration management  
+5. Test configuration migration from older versions  
+6. Test validation of Monday.com board settings  
+7. Test error handling for invalid configurations

@@ -1,0 +1,90 @@
+# Task ID: 121
+# Title: Implement local storage engine enhancements
+# Status: pending
+# Dependencies: 120
+# Priority: medium
+# Description: Enhance the local storage engine to support Monday.com integration by adding sync-related fields to the task schema and implementing methods for tracking sync status.
+# Details:
+1. Create `scripts/modules/local-storage.js` as an enhanced version of the current task storage
+2. Extend the task schema to include Monday-specific fields:
+   - `mondayItemId`: ID of the corresponding Monday.com item
+   - `lastSyncedAt`: Timestamp of the last successful sync
+   - `syncStatus`: Current sync status (synced, pending, conflict, error)
+   - `lastModifiedLocal`: Timestamp of the last local modification
+   - `lastModifiedMonday`: Timestamp of the last Monday modification
+3. Implement methods to update sync-related fields
+4. Add support for querying tasks by sync status
+5. Implement methods to handle sync conflicts
+6. Ensure backward compatibility with existing task data
+
+Enhanced task schema:
+```javascript
+{
+  "id": 1,
+  "title": "Task Title",
+  "description": "Task description",
+  "status": "pending|in-progress|done",
+  "priority": "high|medium|low",
+  // Monday.com specific fields
+  "mondayItemId": "12345678",
+  "lastSyncedAt": "2025-01-20T10:00:00Z",
+  "syncStatus": "synced|pending|conflict|error",
+  "lastModifiedLocal": "2025-01-20T10:00:00Z",
+  "lastModifiedMonday": "2025-01-20T09:55:00Z"
+}
+```
+
+Implement methods:
+```javascript
+class LocalStorageEngine {
+  constructor() {
+    this.tasksFile = 'tasks.json';
+  }
+
+  loadTasks() {
+    // Load tasks from file
+  }
+
+  saveTasks(tasks) {
+    // Save tasks to file
+  }
+
+  getTaskById(id) {
+    // Get task by ID
+  }
+
+  updateTask(task) {
+    // Update task and set lastModifiedLocal
+  }
+
+  updateSyncStatus(taskId, status, mondayItemId = null) {
+    // Update sync status and related fields
+  }
+
+  getTasksByStatus(status) {
+    // Get tasks by status
+  }
+
+  getTasksBySyncStatus(syncStatus) {
+    // Get tasks by sync status
+  }
+
+  markTaskAsSynced(taskId, mondayItemId) {
+    // Mark task as synced with Monday
+  }
+
+  markTaskAsConflict(taskId, mondayData) {
+    // Mark task as having a conflict
+  }
+}
+```
+
+# Test Strategy:
+1. Unit test the LocalStorageEngine class with sample task data
+2. Test loading and saving tasks with Monday-specific fields
+3. Verify backward compatibility with existing task data
+4. Test sync status update methods
+5. Test querying tasks by sync status
+6. Verify conflict marking and resolution
+7. Test timestamp handling for modifications
+8. Ensure proper error handling for file operations

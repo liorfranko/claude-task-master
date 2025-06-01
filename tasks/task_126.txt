@@ -1,0 +1,104 @@
+# Task ID: 126
+# Title: Add CLI commands for pull-from-Monday operations
+# Status: pending
+# Dependencies: 125
+# Priority: medium
+# Description: Implement CLI commands for pulling Monday.com items to local tasks, including options for dry run, force sync, and specific item IDs.
+# Details:
+1. Add `update-local-from-monday` command to `commands.js`
+2. Implement command handler that uses the Monday sync engine
+3. Support options: `--task-id=X`, `--dry-run`, `--force`
+4. Add progress reporting and error handling
+5. Implement command help and documentation
+6. Add conflict reporting and resolution options
+
+Implementation details:
+```javascript
+// In commands.js
+// Add to commands object
+const commands = {
+  // ... existing commands
+  'update-local-from-monday': updateLocalFromMonday
+};
+
+async function updateLocalFromMonday(args) {
+  const options = {
+    mondayItemId: args['--item-id'],
+    dryRun: args['--dry-run'] === true,
+    force: args['--force'] === true
+  };
+  
+  console.log('Pulling tasks from Monday.com...');
+  
+  if (options.dryRun) {
+    console.log('DRY RUN: No changes will be made to local tasks');
+  }
+  
+  if (options.mondayItemId) {
+    console.log(`Pulling Monday item ID: ${options.mondayItemId}`);
+  } else {
+    console.log('Pulling all items from configured Monday board');
+  }
+  
+  try {
+    const results = await mondaySyncEngine.pullAllTasksFromMonday(options);
+    
+    console.log('\nSync Results:');
+    for (const result of results) {
+      if (result.success) {
+        if (result.dryRun) {
+          console.log(`ℹ️ Monday item ${result.mondayItemId}: Would ${result.isNewTask ? 'create new task' : 'update task'} (dry run)`);
+        } else {
+          console.log(`✅ Monday item ${result.mondayItemId}: ${result.isNewTask ? 'Created new task' : 'Updated task'} ${result.taskId}`);
+        }
+      } else if (result.conflict) {
+        console.log(`⚠️ Monday item ${result.mondayItemId}: Conflict detected - local changes exist`);
+      } else {
+        console.log(`❌ Monday item ${result.mondayItemId}: Failed to sync - ${result.error}`);
+      }
+    }
+    
+    // Report conflicts if any
+    const conflicts = results.filter(r => r.conflict);
+    if (conflicts.length > 0) {
+      console.log(`\n${conflicts.length} conflicts detected. Use --force to override local changes or resolve conflicts with:`);
+      console.log('task-master sync conflicts');
+      console.log('task-master sync resolve --conflict-id=X --strategy=local|monday|manual');
+    }
+    
+    console.log('\nSync completed.');
+  } catch (error) {
+    console.error('Error during sync:', error.message);
+  }
+}
+
+// Update handleSyncCommands to include pull-from-monday
+async function handleSyncCommands(args) {
+  const subcommand = args._[1];
+  
+  switch (subcommand) {
+    case 'push-to-monday':
+      return updateMondayFromLocal(args);
+    case 'pull-from-monday':
+      return updateLocalFromMonday(args);
+    // Other sync subcommands
+    default:
+      console.error(`Unknown sync subcommand: ${subcommand}`);
+      console.log('Available subcommands: push-to-monday, pull-from-monday');
+  }
+}
+```
+
+# Test Strategy:
+1. Test CLI command parsing for update-local-from-monday
+2. Verify options handling: --item-id, --dry-run, --force
+3. Test progress reporting and error handling
+4. Integration test with actual Monday.com API
+5. Test command help and documentation
+6. Verify sync results reporting
+7. Test conflict detection and reporting
+8. Test with various item data scenarios
+9. Run command tests:
+   - `task-master update-local-from-monday --dry-run`
+   - `task-master update-local-from-monday --item-id=12345678`
+   - `task-master sync pull-from-monday --dry-run`

@@ -1,0 +1,165 @@
+# Task ID: 127
+# Title: Implement hybrid mode with automatic synchronization
+# Status: pending
+# Dependencies: 125, 124
+# Priority: high
+# Description: Enhance the persistence manager to support hybrid mode where tasks are stored in both systems with automatic bidirectional synchronization.
+# Details:
+1. Implement HybridStorageProvider in the persistence manager
+2. Add automatic sync on all task operations (create, update, delete)
+3. Implement conflict detection and resolution strategies
+4. Add sync interval configuration for background synchronization
+5. Implement offline operation with sync queue
+6. Add sync status tracking and reporting
+
+Implementation details:
+```javascript
+// In persistence-manager.js
+class HybridStorageProvider {
+  constructor(localStorage, mondayClient) {
+    this.localStorage = localStorage;
+    this.mondayClient = mondayClient;
+    this.syncEngine = require('./monday-sync');
+    this.config = require('../config');
+    
+    // Start background sync if configured
+    this._setupBackgroundSync();
+  }
+
+  _setupBackgroundSync() {
+    const syncInterval = this.config.getSyncInterval() || 300; // Default 5 minutes
+    
+    if (syncInterval > 0) {
+      setInterval(() => this.synchronize(), syncInterval * 1000);
+    }
+  }
+
+  async getTasks() {
+    // Get tasks from local storage
+    return this.localStorage.loadTasks();
+  }
+
+  async getTaskById(id) {
+    return this.localStorage.getTaskById(id);
+  }
+
+  async createTask(taskData) {
+    // Create task locally first
+    const task = await this.localStorage.createTask({
+      ...taskData,
+      lastModifiedLocal: new Date().toISOString(),
+      syncStatus: 'pending'
+    });
+    
+    // Then push to Monday
+    try {
+      const result = await this.syncEngine.pushTaskToMonday(task);
+      if (result.success) {
+        await this.localStorage.markTaskAsSynced(task.id, result.mondayItemId);
+      }
+    } catch (error) {
+      console.error(`Error syncing new task ${task.id} to Monday:`, error);
+      // Task is still created locally with pending sync status
+    }
+    
+    return task;
+  }
+
+  async updateTask(id, taskData) {
+    const task = await this.localStorage.getTaskById(id);
+    
+    if (!task) {
+      throw new Error(`Task with ID ${id} not found`);
+    }
+    
+    // Update task locally first
+    const updatedTask = await this.localStorage.updateTask({
+      ...task,
+      ...taskData,
+      lastModifiedLocal: new Date().toISOString(),
+      syncStatus: task.mondayItemId ? 'pending' : 'synced' // Only mark pending if it exists on Monday
+    });
+    
+    // Then push to Monday if it has a Monday item ID
+    if (updatedTask.mondayItemId) {
+      try {
+        const result = await this.syncEngine.pushTaskToMonday(updatedTask);
+        if (result.success) {
+          await this.localStorage.markTaskAsSynced(updatedTask.id, updatedTask.mondayItemId);
+        }
+      } catch (error) {
+        console.error(`Error syncing updated task ${updatedTask.id} to Monday:`, error);
+        // Task is still updated locally with pending sync status
+      }
+    }
+    
+    return updatedTask;
+  }
+
+  async deleteTask(id) {
+    const task = await this.localStorage.getTaskById(id);
+    
+    if (!task) {
+      throw new Error(`Task with ID ${id} not found`);
+    }
+    
+    // If task has a Monday item ID, delete it from Monday first
+    if (task.mondayItemId) {
+      try {
+        await this.mondayClient.deleteItem(
+          this.config.getMondayBoardId(),
+          task.mondayItemId
+        );
+      } catch (error) {
+        console.error(`Error deleting task ${id} from Monday:`, error);
+        // Continue with local deletion anyway
+      }
+    }
+    
+    // Then delete locally
+    return this.localStorage.deleteTask(id);
+  }
+
+  async synchronize() {
+    // Perform bidirectional sync
+    console.log('Performing bidirectional sync...');
+    
+    // First push pending local changes to Monday
+    const pendingTasks = await this.localStorage.getTasksBySyncStatus('pending');
+    for (const task of pendingTasks) {
+      try {
+        const result = await this.syncEngine.pushTaskToMonday(task);
+        if (result.success) {
+          await this.localStorage.markTaskAsSynced(task.id, result.mondayItemId || task.mondayItemId);
+        }
+      } catch (error) {
+        console.error(`Error syncing task ${task.id} to Monday:`, error);
+      }
+    }
+    
+    // Then pull changes from Monday
+    try {
+      await this.syncEngine.pullAllTasksFromMonday({
+        // Use conflict resolution strategy from config
+        resolveConflicts: this.config.getConflictResolution() || 'manual'
+      });
+    } catch (error) {
+      console.error('Error pulling changes from Monday:', error);
+    }
+    
+    return { success: true };
+  }
+}
+```
+
+# Test Strategy:
+1. Unit test the HybridStorageProvider with mocked dependencies
+2. Test automatic sync on task operations (create, update, delete)
+3. Verify conflict detection and resolution
+4. Test background sync with different intervals
+5. Test offline operation and sync queue
+6. Verify sync status tracking and reporting
+7. Integration test with actual Monday.com API
+8. Test error handling and recovery
+9. Benchmark performance with different sync strategies
+10. Test with the command: `task-master config --set-mode=hybrid`

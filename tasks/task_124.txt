@@ -1,0 +1,88 @@
+# Task ID: 124
+# Title: Add CLI commands for push-to-Monday operations
+# Status: pending
+# Dependencies: 123
+# Priority: medium
+# Description: Implement CLI commands for pushing local tasks to Monday.com, including options for dry run, force sync, and specific task IDs.
+# Details:
+1. Add `update-monday-from-local` command to `commands.js`
+2. Implement command handler that uses the Monday sync engine
+3. Support options: `--task-id=X`, `--dry-run`, `--force`
+4. Add progress reporting and error handling
+5. Implement command help and documentation
+
+Implementation details:
+```javascript
+// In commands.js
+const mondaySyncEngine = require('./modules/monday-sync');
+
+// Add to commands object
+const commands = {
+  // ... existing commands
+  'update-monday-from-local': updateMondayFromLocal,
+  'sync': handleSyncCommands
+};
+
+async function updateMondayFromLocal(args) {
+  const options = {
+    taskId: args['--task-id'],
+    dryRun: args['--dry-run'] === true,
+    force: args['--force'] === true
+  };
+  
+  console.log('Pushing tasks to Monday.com...');
+  
+  if (options.dryRun) {
+    console.log('DRY RUN: No changes will be made to Monday.com');
+  }
+  
+  if (options.taskId) {
+    console.log(`Pushing task ID: ${options.taskId}`);
+  } else {
+    console.log('Pushing all tasks');
+  }
+  
+  try {
+    const results = await mondaySyncEngine.pushAllTasksToMonday(options);
+    
+    console.log('\nSync Results:');
+    for (const result of results) {
+      if (result.success) {
+        console.log(`✅ Task ${result.taskId}: Successfully synced to Monday.com${result.dryRun ? ' (dry run)' : ''}`);
+      } else {
+        console.log(`❌ Task ${result.taskId}: Failed to sync - ${result.error}`);
+      }
+    }
+    
+    console.log('\nSync completed.');
+  } catch (error) {
+    console.error('Error during sync:', error.message);
+  }
+}
+
+async function handleSyncCommands(args) {
+  const subcommand = args._[1];
+  
+  switch (subcommand) {
+    case 'push-to-monday':
+      return updateMondayFromLocal(args);
+    // Other sync subcommands will be added later
+    default:
+      console.error(`Unknown sync subcommand: ${subcommand}`);
+      console.log('Available subcommands: push-to-monday');
+  }
+}
+```
+
+# Test Strategy:
+1. Test CLI command parsing for update-monday-from-local
+2. Verify options handling: --task-id, --dry-run, --force
+3. Test progress reporting and error handling
+4. Integration test with actual Monday.com API
+5. Test command help and documentation
+6. Verify sync results reporting
+7. Test with various task data scenarios
+8. Run command tests:
+   - `task-master update-monday-from-local --dry-run`
+   - `task-master update-monday-from-local --task-id=1`
+   - `task-master sync push-to-monday --dry-run`

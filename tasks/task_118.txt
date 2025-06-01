@@ -1,0 +1,277 @@
+# Task ID: 118
+# Title: Create Documentation and User Guides
+# Status: pending
+# Dependencies: 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116
+# Priority: low
+# Description: Create comprehensive documentation and user guides for the Monday.com integration, including setup instructions, mode comparison, and command reference.
+# Details:
+Create comprehensive documentation that includes:  
+1. Setup instructions for Monday.com integration  
+2. Mode comparison and selection guide  
+3. Command reference for all sync operations  
+4. Troubleshooting guide for common issues  
+5. Best practices for hybrid mode  
+6. Examples and tutorials  
+
+Implementation:  
+```markdown
+# Monday.com Integration Guide
+
+## Overview
+
+Task Master now supports integration with Monday.com boards, providing three different persistence modes for task storage:
+
+- **Local Mode (Default)**: Tasks stored only in local `tasks.json` file
+- **Monday Mode**: Tasks stored only in Monday.com board
+- **Hybrid Mode**: Tasks stored in both systems with automatic synchronization
+
+This guide explains how to set up and use each mode, and how to migrate between them.
+
+## Setup Instructions
+
+### Prerequisites
+
+1. A Monday.com account with access to a board
+2. A Personal Access Token from Monday.com
+
+### Getting a Monday.com API Token
+
+1. Log in to your Monday.com account
+2. Go to your avatar in the bottom-left corner
+3. Click "Developers" → "My Access Tokens"
+4. Generate a new token with appropriate permissions
+
+### Configuration
+
+Set your API token as an environment variable:
+
+```bash
+export MONDAY_API_TOKEN=your_token_here
+```
+
+Or add it to your `.taskmasterconfig` file:
+
+```json
+{
+  "persistence": {
+    "mode": "local",
+    "mondayConfig": {
+      "boardId": "your_board_id",
+      "apiToken": "your_token_here",
+      "columnMapping": {
+        "status": "status_column_id",
+        "title": "name",
+        "description": "notes",
+        "priority": "priority_column_id"
+      },
+      "syncSettings": {
+        "conflictResolution": "manual",
+        "syncInterval": 300,
+        "syncSubtasks": false
+      }
+    }
+  }
+}
+```
+
+### Setting the Persistence Mode
+
+```bash
+# Local mode (default)
+task-master config --set-mode=local
+
+# Monday mode
+task-master config --set-mode=monday --board-id=your_board_id
+
+# Hybrid mode
+task-master config --set-mode=hybrid --board-id=your_board_id
+```
+
+## Mode Comparison
+
+| Feature | Local Mode | Monday Mode | Hybrid Mode |
+|---------|------------|-------------|-------------|
+| Storage Location | Local files only | Monday.com only | Both systems |
+| Internet Required | No | Yes | Optional |
+| Performance | Fastest | Moderate | Fast (cached) |
+| Collaboration | None | Full | Full |
+| Offline Support | Full | None | Read-only |
+| Backup/Recovery | Manual | Monday handles | Both systems |
+| Conflict Resolution | N/A | N/A | Required |
+| Manual Sync Available | Yes (push only) | Yes (pull only) | Yes (both ways) |
+
+## Command Reference
+
+### Core Mode Commands
+
+```bash
+# Show current configuration
+task-master config --show
+
+# Set persistence mode
+task-master config --set-mode=local|monday|hybrid
+
+# Migrate between modes
+task-master migrate --from=MODE --to=MODE [--dry-run]
+```
+
+### Manual Sync Commands
+
+```bash
+# Push local changes to Monday
+task-master update-monday-from-local [--task-id=X] [--dry-run] [--force]
+
+# Pull Monday changes to local  
+task-master update-local-from-monday [--task-id=X] [--dry-run] [--force]
+
+# Check sync status and conflicts
+task-master sync status
+task-master sync conflicts
+task-master sync resolve --conflict-id=X --strategy=local|monday|manual
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Authentication Errors
+
+```
+Error: Authentication failed. Please check your API token.
+```
+
+**Solution**: Verify your Monday.com API token is correct and has the necessary permissions.
+
+#### Board Not Found
+
+```
+Error: Board with ID X not found.
+```
+
+**Solution**: Verify the board ID is correct and you have access to it.
+
+#### Sync Conflicts
+
+```
+Found X conflicts. Use --conflict-id=X --strategy=local|monday to resolve.
+```
+
+**Solution**: Use the `task-master sync resolve` command to resolve conflicts.
+
+## Best Practices
+
+### Hybrid Mode
+
+1. Set a reasonable sync interval (5-10 minutes recommended)
+2. Choose an appropriate conflict resolution strategy
+3. Regularly check for conflicts with `task-master sync conflicts`
+4. Use `task-master sync status` to monitor sync health
+
+### Monday Mode
+
+1. Ensure stable internet connection
+2. Use `task-master update-local-from-monday` to refresh local cache
+3. Configure column mappings to match your Monday board
+
+### Local Mode
+
+1. Regularly back up your `tasks.json` file
+2. Use `task-master update-monday-from-local` for occasional sharing
+
+## Examples
+
+### Setting Up Hybrid Mode
+
+```bash
+# Set mode to hybrid
+task-master config --set-mode=hybrid --board-id=9275265350
+
+# Check sync status
+task-master sync status
+
+# Add a task
+task-master add-task --prompt="Test hybrid task"
+
+# Verify it appears in Monday.com
+```
+
+### Resolving Conflicts
+
+```bash
+# List conflicts
+task-master sync conflicts
+
+# Resolve a specific conflict
+task-master sync resolve --conflict-id=1 --strategy=local
+```
+
+### Migrating from Local to Monday
+
+```bash
+# Dry run first
+task-master migrate --from=local --to=monday --dry-run
+
+# Actual migration
+task-master migrate --from=local --to=monday
+```
+```
+
+Create a README.md file for the Monday.com integration:  
+```markdown
+# Monday.com Integration for Task Master
+
+## Overview
+
+This feature adds Monday.com board integration to Task Master, providing three different persistence modes for task storage:
+
+- **Local Mode (Default)**: Tasks stored only in local `tasks.json` file
+- **Monday Mode**: Tasks stored only in Monday.com board
+- **Hybrid Mode**: Tasks stored in both systems with automatic synchronization
+
+## Installation
+
+```bash
+# Install dependencies
+npm install graphql-request graphql p-throttle
+```
+
+## Configuration
+
+```bash
+# Set your Monday.com API token
+export MONDAY_API_TOKEN=your_token_here
+
+# Configure persistence mode
+task-master config --set-mode=monday --board-id=your_board_id
+```
+
+## Usage
+
+```bash
+# Add a task (works in any mode)
+task-master add-task --prompt="Test task"
+
+# List tasks (works in any mode)
+task-master list
+
+# Manual sync commands
+task-master update-monday-from-local
+task-master update-local-from-monday
+
+# Check sync status
+task-master sync status
+```
+
+## Documentation
+
+For complete documentation, see the [Monday.com Integration Guide](docs/monday-integration.md).
+```
+
+# Test Strategy:
+1. Review documentation for accuracy and completeness  
+2. Verify all commands and examples work as described  
+3. Test setup instructions with a fresh installation  
+4. Test troubleshooting guide with common error scenarios  
+5. Get feedback from users on documentation clarity  
+6. Ensure all mode comparisons are accurate  
+7. Verify all command options are documented

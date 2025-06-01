@@ -1,0 +1,204 @@
+# Task ID: 113
+# Title: Implement MCP Tools for Monday Integration
+# Status: pending
+# Dependencies: 109, 110, 112
+# Priority: low
+# Description: Create MCP tools for Monday.com integration accessible via Cursor, including sync tools, conflict resolution, and mode management.
+# Details:
+Create MCP tools in `mcp-server/src/tools/` for:  
+1. Sync tasks between local and Monday.com  
+2. Resolve sync conflicts  
+3. Switch between persistence modes  
+4. Show sync status and statistics  
+
+Implementation:  
+```javascript
+// mcp-server/src/tools/monday-integration.js
+const persistenceManager = require('../../../scripts/modules/persistence-manager');
+const mondaySync = require('../../../scripts/modules/monday-sync');
+
+module.exports = {
+  name: 'monday-integration',
+  description: 'Monday.com integration tools',
+  tools: [
+    {
+      name: 'sync-tasks',
+      description: 'Synchronize tasks between local and Monday.com',
+      async handler(args) {
+        const config = require('../../../scripts/config').getConfig();
+        const syncEngine = new mondaySync(config);
+        
+        try {
+          const result = await syncEngine.syncAll();
+          
+          return {
+            success: true,
+            data: {
+              results: result.results,
+              conflicts: result.conflicts.length,
+              message: `Sync completed. ${result.conflicts.length} conflicts found.`
+            }
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: error.message
+          };
+        }
+      }
+    },
+    {
+      name: 'resolve-conflicts',
+      description: 'Resolve sync conflicts',
+      async handler(args) {
+        const config = require('../../../scripts/config').getConfig();
+        const syncEngine = new mondaySync(config);
+        
+        try {
+          // Get conflicts
+          const { conflicts } = await syncEngine.syncAll();
+          
+          if (conflicts.length === 0) {
+            return {
+              success: true,
+              data: {
+                message: 'No conflicts found.'
+              }
+            };
+          }
+          
+          // If conflict ID is provided, resolve it
+          if (args.conflictId && args.strategy) {
+            const conflictId = parseInt(args.conflictId);
+            const strategy = args.strategy;
+            
+            const resolvedConflict = await syncEngine.resolveConflict(conflictId, strategy);
+            
+            return {
+              success: true,
+              data: {
+                message: `Conflict ${conflictId} resolved with strategy: ${strategy}`,
+                resolvedConflict
+              }
+            };
+          }
+          
+          // Otherwise, return list of conflicts
+          return {
+            success: true,
+            data: {
+              conflicts,
+              message: `Found ${conflicts.length} conflicts.`
+            }
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: error.message
+          };
+        }
+      }
+    },
+    {
+      name: 'switch-mode',
+      description: 'Switch between persistence modes',
+      async handler(args) {
+        const config = require('../../../scripts/config').getConfig();
+        const mode = args.mode;
+        
+        if (!['local', 'monday', 'hybrid'].includes(mode)) {
+          return {
+            success: false,
+            error: 'Invalid mode. Must be one of: local, monday, hybrid'
+          };
+        }
+        
+        try {
+          // Update config
+          config.persistence = config.persistence || {};
+          config.persistence.mode = mode;
+          
+          // If switching to monday or hybrid, ensure board ID is set
+          if ((mode === 'monday' || mode === 'hybrid') && args.boardId) {
+            config.persistence.mondayConfig = config.persistence.mondayConfig || {};
+            config.persistence.mondayConfig.boardId = args.boardId;
+          }
+          
+          require('../../../scripts/config').saveConfig(config);
+          
+          return {
+            success: true,
+            data: {
+              message: `Persistence mode set to: ${mode}`,
+              config: config.persistence
+            }
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: error.message
+          };
+        }
+      }
+    },
+    {
+      name: 'push-to-monday',
+      description: 'Push local tasks to Monday.com',
+      async handler(args) {
+        try {
+          const result = await require('../../../scripts/commands').commands['update-monday-from-local'](args);
+          
+          return {
+            success: true,
+            data: result
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: error.message
+          };
+        }
+      }
+    },
+    {
+      name: 'pull-from-monday',
+      description: 'Pull Monday.com tasks to local',
+      async handler(args) {
+        try {
+          const result = await require('../../../scripts/commands').commands['update-local-from-monday'](args);
+          
+          return {
+            success: true,
+            data: result
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: error.message
+          };
+        }
+      }
+    }
+  ]
+};
+```
+
+Register MCP tools:  
+```javascript
+// mcp-server/src/tools/index.js
+const mondayIntegration = require('./monday-integration');
+
+module.exports = {
+  // Existing tools
+  mondayIntegration
+};
+```
+
+# Test Strategy:
+1. Test each MCP tool with mock providers  
+2. Test with real Monday.com API using test board 9275265350  
+3. Test error handling and reporting  
+4. Test with various arguments and edge cases  
+5. Test integration with Cursor  
+6. Test performance with large task sets  
+7. Test user experience and feedback

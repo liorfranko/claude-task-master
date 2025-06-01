@@ -1,0 +1,215 @@
+# Task ID: 134
+# Title: Create comprehensive documentation and examples
+# Status: pending
+# Dependencies: 132
+# Priority: medium
+# Description: Create detailed documentation for the Monday.com integration, including setup instructions, usage examples, troubleshooting guides, and best practices.
+# Details:
+1. Create README.md with overview and setup instructions
+2. Add detailed documentation for each persistence mode
+3. Create usage examples for common scenarios
+4. Add troubleshooting guides for common issues
+5. Document best practices for Monday.com integration
+6. Create API reference for Monday client and sync engine
+7. Add examples for CLI commands and MCP tools
+
+Implementation details:
+```markdown
+# Monday.com Integration for Task Master
+
+## Overview
+This feature adds Monday.com board integration to Task Master, providing three different persistence modes for task storage. Users can choose between local-only storage (default), Monday.com-only storage, or hybrid mode where tasks are persisted in both systems and kept synchronized.
+
+## Setup
+
+### Prerequisites
+- Task Master installed
+- Monday.com account with API access
+- Personal Access Token from Monday.com
+
+### Installation
+1. Install the required dependency:
+   ```bash
+   npm install graphql-request
+   ```
+
+2. Set up your Monday.com API token:
+   ```bash
+   export MONDAY_API_TOKEN=your_token_here
+   # or add to your .env file
+   ```
+
+3. Configure Task Master with your Monday.com board:
+   ```bash
+   task-master config --monday-board=9275265350 --monday-token=$MONDAY_API_TOKEN
+   ```
+
+## Persistence Modes
+
+### Local Mode (Default)
+- Tasks stored only in local `tasks.json` file
+- No Monday.com API calls required
+- Fastest performance, works offline
+- Current Task Master behavior
+
+```bash
+# Switch to local mode
+task-master config --set-mode=local
+```
+
+### Monday Mode
+- Tasks stored only in Monday.com board
+- Local `tasks.json` acts as cache/proxy
+- All operations go through Monday API
+- Requires internet connection
+
+```bash
+# Switch to Monday mode
+task-master config --set-mode=monday
+```
+
+### Hybrid Mode
+- Tasks stored in both local `tasks.json` and Monday.com
+- Automatic bidirectional synchronization
+- Conflict detection and resolution
+- Works offline with sync when connection available
+
+```bash
+# Switch to hybrid mode
+task-master config --set-mode=hybrid
+```
+
+## CLI Commands
+
+### Mode Management
+```bash
+# Show current configuration
+task-master config --show
+
+# Set persistence mode
+task-master config --set-mode=local|monday|hybrid
+
+# Migrate between modes
+task-master migrate --from=MODE --to=MODE [--dry-run]
+```
+
+### Manual Sync Commands
+```bash
+# Push local changes to Monday
+task-master update-monday-from-local [--task-id=X] [--dry-run] [--force]
+# or
+task-master sync push-to-monday [--task-id=X] [--dry-run] [--force]
+
+# Pull Monday changes to local
+task-master update-local-from-monday [--task-id=X] [--dry-run] [--force]
+# or
+task-master sync pull-from-monday [--task-id=X] [--dry-run] [--force]
+
+# Check sync status
+task-master sync status
+
+# View conflicts
+task-master sync conflicts
+
+# Resolve conflicts
+task-master sync resolve --conflict-id=X --strategy=local|monday|manual
+```
+
+## MCP Tools
+
+The following MCP tools are available through Cursor:
+
+- `push-to-monday`: Push local tasks to Monday.com
+- `pull-from-monday`: Pull Monday.com items to local tasks
+- `sync-status`: Check synchronization status
+- `resolve-conflicts`: Resolve synchronization conflicts
+- `switch-mode`: Switch persistence mode
+- `migrate-mode`: Migrate between persistence modes
+
+## Troubleshooting
+
+### API Connection Issues
+- Check your API token is correct
+- Verify internet connection
+- Ensure your Monday.com account has API access
+- Check rate limits (10 requests per second)
+
+### Sync Failures
+- Run `task-master sync status` to check for errors
+- Use `--force` option to retry failed syncs
+- Check for conflicts with `task-master sync conflicts`
+
+### Conflict Resolution
+- When the same task is modified in both systems, a conflict occurs
+- Use `task-master sync conflicts` to view conflicts
+- Resolve with `task-master sync resolve --conflict-id=X --strategy=local|monday|manual`
+- Strategies: `local` (keep local changes), `monday` (use Monday version), `manual` (resolve manually)
+
+## Best Practices
+
+1. **Choose the right mode** for your workflow:
+   - Local: For individual use or when offline
+   - Monday: For team collaboration with Monday as source of truth
+   - Hybrid: For flexibility to work in both systems
+
+2. **Regular synchronization** in hybrid mode:
+   - Run `task-master sync status` regularly
+   - Resolve conflicts promptly
+
+3. **Backup before migration**:
+   - Always use `--dry-run` first when migrating
+   - Backup your tasks.json file before major changes
+
+4. **API Token Security**:
+   - Use environment variables for API tokens
+   - Never commit tokens to version control
+
+## Examples
+
+### Setting Up Monday Integration
+```bash
+# Set API token
+export MONDAY_API_TOKEN=your_token_here
+
+# Configure Monday board
+task-master config --monday-board=9275265350 --monday-token=$MONDAY_API_TOKEN
+
+# Switch to hybrid mode
+task-master config --set-mode=hybrid
+```
+
+### Working with Hybrid Mode
+```bash
+# Add a task (automatically syncs to Monday)
+task-master add-task --prompt="New task with Monday sync"
+
+# Update a task (automatically syncs to Monday)
+task-master set-status --id=1 --status=done
+
+# Check sync status
+task-master sync status
+
+# Resolve any conflicts
+task-master sync conflicts
+task-master sync resolve --conflict-id=conflict-1 --strategy=local
+```
+
+### Migrating Between Modes
+```bash
+# Migrate from local to Monday mode (dry run first)
+task-master migrate --from=local --to=monday --dry-run
+
+# Actual migration
+task-master migrate --from=local --to=monday
+```
+```
+
+# Test Strategy:
+1. Verify documentation accuracy and completeness
+2. Test all examples to ensure they work as documented
+3. Review troubleshooting guides for common issues
+4. Verify API reference accuracy
+5. Test setup instructions with a clean installation
+6. Review best practices for correctness and relevance
+7. Ensure all CLI commands and MCP tools are documented
+8. Verify mode descriptions and use cases

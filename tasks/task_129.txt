@@ -1,0 +1,203 @@
+# Task ID: 129
+# Title: Implement Monday-only persistence mode
+# Status: pending
+# Dependencies: 127
+# Priority: medium
+# Description: Create a storage provider that uses Monday.com as the primary storage system, with local storage acting as a cache.
+# Details:
+1. Implement MondayStorageProvider in the persistence manager
+2. All task operations (create, update, delete) go through Monday API
+3. Use local storage as a cache for performance and offline capability
+4. Handle Monday-specific field mapping and constraints
+5. Implement cache invalidation and refresh strategies
+
+Implementation details:
+```javascript
+// In persistence-manager.js
+class MondayStorageProvider {
+  constructor(localStorage, mondayClient) {
+    this.localStorage = localStorage;
+    this.mondayClient = mondayClient;
+    this.syncEngine = require('./monday-sync');
+    this.config = require('../config');
+    
+    // Initialize cache on startup
+    this._refreshCache();
+  }
+
+  async _refreshCache() {
+    try {
+      // Pull all items from Monday to local cache
+      await this.syncEngine.pullAllTasksFromMonday({ force: true });
+      console.log('Local cache refreshed from Monday');
+    } catch (error) {
+      console.error('Error refreshing cache from Monday:', error);
+    }
+  }
+
+  async getTasks() {
+    // Try to refresh cache first
+    try {
+      await this._refreshCache();
+    } catch (error) {
+      console.warn('Using potentially stale cache due to refresh error:', error.message);
+    }
+    
+    // Return tasks from local cache
+    return this.localStorage.loadTasks();
+  }
+
+  async getTaskById(id) {
+    const task = await this.localStorage.getTaskById(id);
+    
+    if (task && task.mondayItemId) {
+      // Try to get fresh data from Monday
+      try {
+        await this.syncEngine.pullTaskFromMonday(task.mondayItemId, { force: true });
+        // Get updated task from cache
+        return this.localStorage.getTaskById(id);
+      } catch (error) {
+        console.warn(`Using cached version of task ${id} due to refresh error:`, error.message);
+        return task;
+      }
+    }
+    
+    return task;
+  }
+
+  async createTask(taskData) {
+    // Create task on Monday first
+    const boardId = this.config.getMondayBoardId();
+    const columnMapping = this.config.getMondayColumnMapping();
+    
+    // Map task fields to Monday column values
+    const columnValues = {
+      [columnMapping.status]: this.syncEngine._mapStatusToMonday(taskData.status || 'pending'),
+      [columnMapping.description]: taskData.description || '',
+      [columnMapping.priority]: this.syncEngine._mapPriorityToMonday(taskData.priority || 'medium')
+    };
+    
+    try {
+      // Create item on Monday
+      const result = await this.mondayClient.createItem(
+        boardId,
+        taskData.title,
+        columnValues
+      );
+      
+      // Create in local cache with Monday ID
+      const task = await this.localStorage.createTask({
+        ...taskData,
+        mondayItemId: result.id,
+        lastSyncedAt: new Date().toISOString(),
+        syncStatus: 'synced',
+        lastModifiedMonday: new Date().toISOString()
+      });
+      
+      return task;
+    } catch (error) {
+      throw new Error(`Failed to create task on Monday: ${error.message}`);
+    }
+  }
+
+  async updateTask(id, taskData) {
+    const task = await this.localStorage.getTaskById(id);
+    
+    if (!task) {
+      throw new Error(`Task with ID ${id} not found`);
+    }
+    
+    if (!task.mondayItemId) {
+      throw new Error(`Task ${id} does not exist on Monday`);
+    }
+    
+    // Update on Monday first
+    const boardId = this.config.getMondayBoardId();
+    const columnMapping = this.config.getMondayColumnMapping();
+    
+    // Map task fields to Monday column values
+    const columnValues = {};
+    
+    if (taskData.status) {
+      columnValues[columnMapping.status] = this.syncEngine._mapStatusToMonday(taskData.status);
+    }
+    
+    if (taskData.description) {
+      columnValues[columnMapping.description] = taskData.description;
+    }
+    
+    if (taskData.priority) {
+      columnValues[columnMapping.priority] = this.syncEngine._mapPriorityToMonday(taskData.priority);
+    }
+    
+    try {
+      // Update title if changed
+      if (taskData.title && taskData.title !== task.title) {
+        await this.mondayClient.updateItemName(
+          boardId,
+          task.mondayItemId,
+          taskData.title
+        );
+      }
+      
+      // Update column values
+      if (Object.keys(columnValues).length > 0) {
+        await this.mondayClient.updateItem(
+          boardId,
+          task.mondayItemId,
+          columnValues
+        );
+      }
+      
+      // Update in local cache
+      const updatedTask = await this.localStorage.updateTask({
+        ...task,
+        ...taskData,
+        lastSyncedAt: new Date().toISOString(),
+        syncStatus: 'synced',
+        lastModifiedMonday: new Date().toISOString()
+      });
+      
+      return updatedTask;
+    } catch (error) {
+      throw new Error(`Failed to update task on Monday: ${error.message}`);
+    }
+  }
+
+  async deleteTask(id) {
+    const task = await this.localStorage.getTaskById(id);
+    
+    if (!task) {
+      throw new Error(`Task with ID ${id} not found`);
+    }
+    
+    if (!task.mondayItemId) {
+      throw new Error(`Task ${id} does not exist on Monday`);
+    }
+    
+    try {
+      // Delete from Monday first
+      await this.mondayClient.deleteItem(
+        this.config.getMondayBoardId(),
+        task.mondayItemId
+      );
+      
+      // Then delete from local cache
+      return this.localStorage.deleteTask(id);
+    } catch (error) {
+      throw new Error(`Failed to delete task on Monday: ${error.message}`);
+    }
+  }
+}
+```
+
+# Test Strategy:
+1. Unit test the MondayStorageProvider with mocked dependencies
+2. Test all task operations (create, update, delete) through Monday API
+3. Verify local cache usage and refresh strategies
+4. Test offline behavior and error handling
+5. Integration test with actual Monday.com API
+6. Test performance with different cache strategies
+7. Verify field mapping between Task Master and Monday
+8. Test error handling and recovery
+9. Run command test: `task-master config --set-mode=monday`

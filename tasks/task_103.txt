@@ -1,0 +1,172 @@
+# Task ID: 103
+# Title: Implement End-to-End Testing
+# Status: pending
+# Dependencies: 100
+# Priority: low
+# Description: Create comprehensive end-to-end tests for the Monday.com integration to verify the entire workflow from configuration to sync.
+# Details:
+1. Create end-to-end test suite
+2. Test the complete workflow from configuration to sync
+3. Test error scenarios and recovery
+
+Test implementation:
+```javascript
+// tests/e2e/monday-integration.e2e.js
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// Test configuration
+const TEST_BOARD_ID = '9275265350';
+const API_TOKEN = process.env.MONDAY_API_TOKEN;
+
+if (!API_TOKEN) {
+  console.error('MONDAY_API_TOKEN environment variable is required for E2E tests');
+  process.exit(1);
+}
+
+// Helper functions
+function runCommand(command) {
+  try {
+    return execSync(command, { encoding: 'utf8' });
+  } catch (error) {
+    console.error(`Command failed: ${command}`);
+    console.error(error.stdout);
+    console.error(error.stderr);
+    throw error;
+  }
+}
+
+function createTestTask() {
+  const taskTitle = `Test Task ${Date.now()}`;
+  const output = runCommand(`node task-master.js add "${taskTitle}" --description="E2E test task"`);
+  const taskIdMatch = output.match(/Task (\d+) created/);
+  
+  if (!taskIdMatch) {
+    throw new Error('Failed to extract task ID from output');
+  }
+  
+  return {
+    id: parseInt(taskIdMatch[1]),
+    title: taskTitle
+  };
+}
+
+function cleanupTestTask(taskId) {
+  try {
+    runCommand(`node task-master.js delete ${taskId}`);
+  } catch (error) {
+    console.warn(`Warning: Failed to clean up test task ${taskId}`);
+  }
+}
+
+// Test suite
+describe('Monday.com Integration E2E', () => {
+  let testTask;
+  
+  beforeAll(() => {
+    // Configure Monday integration
+    runCommand(`node task-master.js config monday --board-id=${TEST_BOARD_ID}`);
+    console.log('Monday.com integration configured');
+  });
+  
+  beforeEach(() => {
+    // Create a test task for each test
+    testTask = createTestTask();
+    console.log(`Created test task ${testTask.id}: ${testTask.title}`);
+  });
+  
+  afterEach(() => {
+    // Clean up test task after each test
+    if (testTask) {
+      cleanupTestTask(testTask.id);
+      console.log(`Cleaned up test task ${testTask.id}`);
+    }
+  });
+  
+  test('should sync a task to Monday.com', () => {
+    // Sync the test task
+    const syncOutput = runCommand(`node task-master.js sync-monday --task-id=${testTask.id}`);
+    console.log(syncOutput);
+    
+    // Check sync status
+    const statusOutput = runCommand('node task-master.js monday-status');
+    console.log(statusOutput);
+    
+    // Verify task was synced
+    expect(statusOutput).toContain(`Task ${testTask.id}`);
+    expect(statusOutput).not.toContain('Tasks with sync errors');
+    
+    // Verify task appears in Monday.com (would require API call)
+    // For now, we'll just check that the sync reported success
+    expect(syncOutput).toContain('synced successfully');
+  });
+  
+  test('should update an existing Monday item when task changes', () => {
+    // First sync the test task
+    runCommand(`node task-master.js sync-monday --task-id=${testTask.id}`);
+    
+    // Update the task
+    const updatedTitle = `Updated ${testTask.title}`;
+    runCommand(`node task-master.js update ${testTask.id} --title="${updatedTitle}"`);
+    
+    // Sync again
+    const syncOutput = runCommand(`node task-master.js sync-monday --task-id=${testTask.id}`);
+    console.log(syncOutput);
+    
+    // Verify update was synced
+    expect(syncOutput).toContain('synced successfully');
+    
+    // Verify task status in Monday.com (would require API call)
+    // For now, we'll just check that the sync reported success
+  });
+  
+  test('should handle sync errors gracefully', () => {
+    // Temporarily break the configuration
+    const configPath = path.join(process.cwd(), '.taskmasterconfig');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const originalBoardId = config.mondayIntegration.boardId;
+    
+    // Set invalid board ID
+    config.mondayIntegration.boardId = '999999999';
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    
+    try {
+      // Attempt to sync with invalid config
+      const syncOutput = runCommand(`node task-master.js sync-monday --task-id=${testTask.id}`);
+      console.log(syncOutput);
+      
+      // Check sync status
+      const statusOutput = runCommand('node task-master.js monday-status');
+      console.log(statusOutput);
+      
+      // Verify error was reported
+      expect(statusOutput).toContain('Tasks with sync errors');
+      expect(statusOutput).toContain(`Task ${testTask.id}`);
+    } finally {
+      // Restore original config
+      config.mondayIntegration.boardId = originalBoardId;
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    }
+    
+    // Verify sync works after fixing config
+    const syncOutput = runCommand(`node task-master.js sync-monday --task-id=${testTask.id}`);
+    expect(syncOutput).toContain('synced successfully');
+  });
+});
+```
+
+# Test Strategy:
+1. Set up test environment:
+   - Ensure MONDAY_API_TOKEN environment variable is set
+   - Use test board ID 9275265350
+   - Create isolated test tasks
+2. Run end-to-end tests:
+   - Test configuration workflow
+   - Test task creation and sync
+   - Test task update and sync
+   - Test error handling and recovery
+3. Verify results in Monday.com:
+   - Manually check that items appear on the Monday.com board
+   - Verify item titles and statuses match Task Master tasks
+   - Verify updates are reflected in Monday.com

@@ -1,0 +1,192 @@
+# Task ID: 100
+# Title: Implement Integration Tests
+# Status: pending
+# Dependencies: 96, 98, 99
+# Priority: medium
+# Description: Create comprehensive integration tests for the Monday.com integration, including API client, sync engine, and CLI commands.
+# Details:
+1. Create test fixtures for Monday.com API mocking
+2. Implement integration tests for API client
+3. Implement integration tests for sync engine
+4. Implement integration tests for CLI commands
+
+Test implementation:
+```javascript
+// tests/integration/monday-integration.test.js
+const { MondayClient } = require('../../scripts/modules/monday-client');
+const { MondaySyncEngine } = require('../../scripts/modules/monday-sync');
+const { execSync } = require('child_process');
+const nock = require('nock'); // For API mocking
+
+// Mock config for testing
+const testConfig = {
+  mondayIntegration: {
+    boardId: '9275265350',
+    apiToken: 'test_token',
+    columnMapping: {
+      status: 'status',
+      title: 'name',
+      description: 'notes'
+    },
+    syncSettings: {
+      autoSync: false,
+      syncSubtasks: false
+    }
+  }
+};
+
+// Mock task for testing
+const testTask = {
+  id: 999,
+  title: 'Test Task',
+  description: 'Test Description',
+  status: 'pending',
+  syncStatus: 'pending'
+};
+
+describe('Monday.com Integration', () => {
+  // Setup and teardown
+  beforeEach(() => {
+    // Reset nock and set up mocks
+    nock.cleanAll();
+    
+    // Mock Monday.com API
+    nock('https://api.monday.com')
+      .post('/v2', body => body.query.includes('me'))
+      .reply(200, { data: { me: { name: 'Test User' } } });
+      
+    nock('https://api.monday.com')
+      .post('/v2', body => body.query.includes('boards'))
+      .reply(200, {
+        data: {
+          boards: [{
+            id: '9275265350',
+            name: 'Test Board',
+            columns: [
+              { id: 'name', title: 'Name', type: 'text' },
+              { id: 'status', title: 'Status', type: 'status' },
+              { id: 'notes', title: 'Notes', type: 'long-text' }
+            ]
+          }]
+        }
+      });
+      
+    nock('https://api.monday.com')
+      .post('/v2', body => body.query.includes('create_item'))
+      .reply(200, {
+        data: {
+          create_item: {
+            id: '12345678'
+          }
+        }
+      });
+      
+    nock('https://api.monday.com')
+      .post('/v2', body => body.query.includes('change_column_value'))
+      .reply(200, {
+        data: {
+          change_column_value: {
+            id: '12345678'
+          }
+        }
+      });
+  });
+  
+  describe('MondayClient', () => {
+    test('should connect to Monday.com API', async () => {
+      const client = new MondayClient('test_token');
+      const result = await client.testConnection();
+      
+      expect(result.success).toBe(true);
+      expect(result.data.me.name).toBe('Test User');
+    });
+    
+    test('should handle rate limiting', async () => {
+      // Mock rate limit response followed by success
+      nock.cleanAll();
+      nock('https://api.monday.com')
+        .post('/v2')
+        .reply(429, { error: 'Rate limit exceeded' })
+        .post('/v2')
+        .reply(200, { data: { me: { name: 'Test User' } } });
+      
+      const client = new MondayClient('test_token');
+      const result = await client.testConnection();
+      
+      expect(result.success).toBe(true);
+    });
+  });
+  
+  describe('MondaySyncEngine', () => {
+    test('should create a new item on Monday', async () => {
+      const syncEngine = new MondaySyncEngine(testConfig);
+      const result = await syncEngine.syncTask(testTask);
+      
+      expect(result.success).toBe(true);
+      expect(result.mondayItemId).toBe('12345678');
+    });
+    
+    test('should update an existing item on Monday', async () => {
+      const taskWithItemId = { ...testTask, mondayItemId: '12345678' };
+      const syncEngine = new MondaySyncEngine(testConfig);
+      const result = await syncEngine.syncTask(taskWithItemId);
+      
+      expect(result.success).toBe(true);
+      expect(result.mondayItemId).toBe('12345678');
+    });
+    
+    test('should map task status correctly', () => {
+      const syncEngine = new MondaySyncEngine(testConfig);
+      
+      expect(syncEngine.mapStatus('pending')).toBe('Not Started');
+      expect(syncEngine.mapStatus('in_progress')).toBe('Working on it');
+      expect(syncEngine.mapStatus('done')).toBe('Done');
+      expect(syncEngine.mapStatus('unknown')).toBe('Not Started');
+    });
+  });
+  
+  describe('CLI Commands', () => {
+    // These tests require mocking the file system and CLI environment
+    // For simplicity, we'll just test the command execution
+    
+    test('should configure Monday integration', () => {
+      // Mock file system operations would be needed here
+      // For now, just verify the command doesn't throw
+      expect(() => {
+        execSync('node task-master.js config monday --board-id=9275265350 --token=test_token', { stdio: 'pipe' });
+      }).not.toThrow();
+    });
+    
+    test('should show Monday status', () => {
+      // Mock file system operations would be needed here
+      // For now, just verify the command doesn't throw
+      expect(() => {
+        execSync('node task-master.js monday-status', { stdio: 'pipe' });
+      }).not.toThrow();
+    });
+    
+    test('should sync tasks to Monday', () => {
+      // Mock file system operations would be needed here
+      // For now, just verify the command doesn't throw
+      expect(() => {
+        execSync('node task-master.js sync-monday --dry-run', { stdio: 'pipe' });
+      }).not.toThrow();
+    });
+  });
+});
+```
+
+# Test Strategy:
+1. Set up test environment:
+   - Install nock for API mocking
+   - Create test fixtures for Monday.com API responses
+   - Set up mock file system for config and tasks
+2. Run integration tests:
+   - Test API client with mocked responses
+   - Test sync engine with mocked client
+   - Test CLI commands with mocked environment
+3. Run end-to-end tests with real Monday.com API:
+   - Create a test task
+   - Sync to test board 9275265350
+   - Verify item is created on Monday.com
+   - Update task and verify changes are synced

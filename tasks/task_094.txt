@@ -1,0 +1,100 @@
+# Task ID: 94
+# Title: Implement CLI Commands for Monday Configuration
+# Status: pending
+# Dependencies: 93
+# Priority: medium
+# Description: Add CLI commands to configure Monday.com integration settings, including board ID and API token.
+# Details:
+1. Add new CLI commands to `commands.js` for Monday.com configuration
+2. Implement command to set board ID and API token
+3. Add command to validate configuration
+
+CLI command implementation:
+```javascript
+// Add to commands.js
+
+const { MondayClient } = require('./scripts/modules/monday-client');
+const { validateMondayConfig } = require('./scripts/modules/config-utils');
+
+// Command to configure Monday integration
+function configureMondayCommand(args) {
+  const boardId = args['board-id'];
+  const token = args['token'];
+  
+  if (!boardId) {
+    console.error('Error: --board-id is required');
+    return 1;
+  }
+  
+  try {
+    const config = loadConfig();
+    
+    // Initialize or update Monday integration config
+    config.mondayIntegration = config.mondayIntegration || {};
+    config.mondayIntegration.boardId = boardId;
+    
+    if (token) {
+      config.mondayIntegration.apiToken = token;
+      console.log('Warning: Storing API token in config file. Consider using MONDAY_API_TOKEN environment variable instead.');
+    }
+    
+    // Set default column mappings if not present
+    config.mondayIntegration.columnMapping = config.mondayIntegration.columnMapping || {
+      status: 'status',
+      title: 'name',
+      description: 'notes'
+    };
+    
+    // Set default sync settings if not present
+    config.mondayIntegration.syncSettings = config.mondayIntegration.syncSettings || {
+      autoSync: false,
+      syncSubtasks: false
+    };
+    
+    saveConfig(config);
+    console.log('Monday.com integration configured successfully.');
+    
+    // Validate configuration if token is available
+    const apiToken = token || process.env.MONDAY_API_TOKEN;
+    if (apiToken) {
+      const mondayClient = new MondayClient(apiToken);
+      validateMondayConfig(config, mondayClient)
+        .then(result => {
+          if (result.valid) {
+            console.log(`Successfully connected to Monday.com board: ${result.board.name}`);
+          } else {
+            console.error(`Error validating Monday.com configuration: ${result.error}`);
+          }
+        })
+        .catch(err => {
+          console.error(`Error connecting to Monday.com: ${err.message}`);
+        });
+    }
+    
+    return 0;
+  } catch (error) {
+    console.error(`Error configuring Monday.com integration: ${error.message}`);
+    return 1;
+  }
+}
+
+// Register commands
+registerCommand('config', {
+  monday: configureMondayCommand
+});
+```
+
+# Test Strategy:
+1. Create unit tests for the CLI commands:
+   - Test command registration
+   - Test argument parsing
+   - Test configuration saving
+2. Create integration tests:
+   - Test `task-master config monday --board-id=9275265350`
+   - Test with and without token argument
+   - Test with invalid board ID
+   - Test validation with environment variable
+3. Manual testing:
+   - Run command with test board ID
+   - Verify configuration is saved correctly
+   - Verify validation works with real Monday.com API

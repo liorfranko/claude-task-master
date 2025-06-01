@@ -1,0 +1,190 @@
+# Task ID: 108
+# Title: Implement Monday Storage Provider
+# Status: pending
+# Dependencies: 104, 106, 107
+# Priority: medium
+# Description: Create a Monday.com storage provider that implements the persistence manager interface for Monday-only mode.
+# Details:
+Create `scripts/modules/monday-storage.js` that:  
+1. Implements the persistence manager interface  
+2. Uses Monday API client for all operations  
+3. Maps Task Master task fields to Monday.com columns  
+4. Implements local caching for performance  
+5. Handles Monday-specific field mapping and constraints  
+
+Code structure:  
+```javascript
+const mondayClient = require('./monday-client');
+
+class MondayStorageProvider {
+  constructor(config) {
+    this.config = config;
+    this.boardId = config.persistence?.mondayConfig?.boardId;
+    this.columnMapping = config.persistence?.mondayConfig?.columnMapping || {
+      status: 'status',
+      title: 'name',
+      description: 'notes',
+      priority: 'priority'
+    };
+    this.cache = null;
+    this.lastFetched = null;
+  }
+
+  async getTasks() {
+    // Check if cache is valid (less than 30 seconds old)
+    const now = Date.now();
+    if (this.cache && this.lastFetched && (now - this.lastFetched < 30000)) {
+      return this.cache;
+    }
+    
+    // Fetch items from Monday
+    const query = `
+      query($boardId: [Int]) {
+        boards(ids: $boardId) {
+          items {
+            id
+            name
+            column_values {
+              id
+              text
+              value
+            }
+          }
+        }
+      }
+    `;
+    
+    const result = await mondayClient.request(query, { boardId: parseInt(this.boardId) });
+    const items = result.boards[0].items;
+    
+    // Map Monday items to Task Master format
+    this.cache = items.map(item => this._mapMondayItemToTask(item));
+    this.lastFetched = now;
+    
+    return this.cache;
+  }
+
+  async createTask(taskData) {
+    // Create item in Monday
+    const mutation = `
+      mutation($boardId: Int!, $itemName: String!) {
+        create_item(board_id: $boardId, item_name: $itemName) {
+          id
+        }
+      }
+    `;
+    
+    const result = await mondayClient.request(mutation, { 
+      boardId: parseInt(this.boardId), 
+      itemName: taskData.title 
+    });
+    
+    const itemId = result.create_item.id;
+    
+    // Update other fields
+    await this._updateMondayItemFields(itemId, taskData);
+    
+    // Invalidate cache
+    this.cache = null;
+    
+    // Return the created task with Monday item ID
+    return {
+      ...taskData,
+      mondayItemId: itemId
+    };
+  }
+
+  // Implement other CRUD methods
+  
+  _mapMondayItemToTask(item) {
+    // Map Monday item to Task Master task
+    const task = {
+      id: parseInt(item.id),
+      title: item.name,
+      mondayItemId: item.id,
+      lastSyncedAt: new Date().toISOString(),
+      syncStatus: 'synced'
+    };
+    
+    // Map column values
+    item.column_values.forEach(column => {
+      if (column.id === this.columnMapping.status) {
+        task.status = column.text;
+      } else if (column.id === this.columnMapping.description) {
+        task.description = column.text;
+      } else if (column.id === this.columnMapping.priority) {
+        task.priority = column.text.toLowerCase();
+      }
+    });
+    
+    return task;
+  }
+  
+  async _updateMondayItemFields(itemId, taskData) {
+    // Update each mapped field
+    const updatePromises = [];
+    
+    if (taskData.status) {
+      updatePromises.push(this._updateColumnValue(
+        itemId, 
+        this.columnMapping.status, 
+        taskData.status
+      ));
+    }
+    
+    if (taskData.description) {
+      updatePromises.push(this._updateColumnValue(
+        itemId, 
+        this.columnMapping.description, 
+        taskData.description
+      ));
+    }
+    
+    if (taskData.priority) {
+      updatePromises.push(this._updateColumnValue(
+        itemId, 
+        this.columnMapping.priority, 
+        taskData.priority
+      ));
+    }
+    
+    await Promise.all(updatePromises);
+  }
+  
+  async _updateColumnValue(itemId, columnId, value) {
+    const mutation = `
+      mutation($boardId: Int!, $itemId: Int!, $columnId: String!, $value: JSON!) {
+        change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
+          id
+        }
+      }
+    `;
+    
+    return mondayClient.request(mutation, {
+      boardId: parseInt(this.boardId),
+      itemId: parseInt(itemId),
+      columnId,
+      value: JSON.stringify(value)
+    });
+  }
+}
+
+module.exports = MondayStorageProvider;
+```
+
+Register with persistence manager:  
+```javascript
+const persistenceManager = require('./persistence-manager');
+const MondayStorageProvider = require('./monday-storage');
+
+persistenceManager.registerProvider('monday', new MondayStorageProvider(require('../config').getConfig()));
+```
+
+# Test Strategy:
+1. Unit tests with mocked Monday API responses  
+2. Test all CRUD operations against Monday.com  
+3. Test field mapping between Task Master and Monday.com  
+4. Test caching mechanism and invalidation  
+5. Test error handling for API failures  
+6. Integration test with real Monday.com API using test board 9275265350  
+7. Performance tests with large task sets

@@ -1,0 +1,163 @@
+# Task ID: 130
+# Title: Implement mode migration tools
+# Status: pending
+# Dependencies: 129, 127
+# Priority: medium
+# Description: Create tools for migrating tasks between different persistence modes (local, Monday, hybrid) without data loss.
+# Details:
+1. Implement migration commands for all mode transitions
+2. Add validation and rollback capabilities
+3. Handle dependency mapping between systems
+4. Implement data export/import between all modes
+5. Add progress reporting and error handling
+
+Implementation details:
+```javascript
+// In commands.js
+async function migrateMode(args) {
+  const fromMode = args['--from'];
+  const toMode = args['--to'];
+  const dryRun = args['--dry-run'] === true;
+  
+  if (!fromMode || !toMode) {
+    console.error('Missing required arguments: --from and --to');
+    console.log('Usage: task-master migrate --from=MODE --to=MODE [--dry-run]');
+    console.log('Available modes: local, monday, hybrid');
+    return;
+  }
+  
+  if (!['local', 'monday', 'hybrid'].includes(fromMode)) {
+    console.error(`Invalid from mode: ${fromMode}. Must be one of: local, monday, hybrid`);
+    return;
+  }
+  
+  if (!['local', 'monday', 'hybrid'].includes(toMode)) {
+    console.error(`Invalid to mode: ${toMode}. Must be one of: local, monday, hybrid`);
+    return;
+  }
+  
+  if (fromMode === toMode) {
+    console.error(`Source and destination modes are the same: ${fromMode}`);
+    return;
+  }
+  
+  console.log(`Migrating from ${fromMode} mode to ${toMode} mode${dryRun ? ' (dry run)' : ''}...`);
+  
+  // Get current configuration
+  const config = require('./config').getConfig();
+  const currentMode = config.persistence?.mode || 'local';
+  
+  if (currentMode !== fromMode) {
+    console.error(`Current mode (${currentMode}) does not match source mode (${fromMode})`);
+    console.log(`Use 'task-master config --set-mode=${fromMode}' first, or specify the correct source mode`);
+    return;
+  }
+  
+  // Create backup before migration
+  const backupFile = `tasks-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  try {
+    await fs.copyFile('tasks.json', backupFile);
+    console.log(`Created backup: ${backupFile}`);
+  } catch (error) {
+    console.error('Failed to create backup:', error.message);
+    if (!dryRun) {
+      console.log('Migration aborted for safety');
+      return;
+    }
+  }
+  
+  try {
+    // Perform migration based on source and destination modes
+    switch (`${fromMode}-to-${toMode}`) {
+      case 'local-to-monday':
+        await migrateLocalToMonday(dryRun);
+        break;
+        
+      case 'local-to-hybrid':
+        await migrateLocalToHybrid(dryRun);
+        break;
+        
+      case 'monday-to-local':
+        await migrateMondayToLocal(dryRun);
+        break;
+        
+      case 'monday-to-hybrid':
+        await migrateMondayToHybrid(dryRun);
+        break;
+        
+      case 'hybrid-to-local':
+        await migrateHybridToLocal(dryRun);
+        break;
+        
+      case 'hybrid-to-monday':
+        await migrateHybridToMonday(dryRun);
+        break;
+    }
+    
+    // Update configuration if not dry run
+    if (!dryRun) {
+      config.persistence = config.persistence || {};
+      config.persistence.mode = toMode;
+      require('./config').saveConfig(config);
+      console.log(`Configuration updated to ${toMode} mode`);
+    }
+    
+    console.log('Migration completed successfully');
+  } catch (error) {
+    console.error('Migration failed:', error.message);
+    console.log(`Restore from backup with: cp ${backupFile} tasks.json`);
+  }
+}
+
+async function migrateLocalToMonday(dryRun) {
+  console.log('Migrating local tasks to Monday...');
+  
+  const mondaySyncEngine = require('./modules/monday-sync');
+  const tasks = require('./modules/local-storage').loadTasks();
+  
+  console.log(`Found ${tasks.length} local tasks to migrate`);
+  
+  if (dryRun) {
+    console.log('DRY RUN: Would push all tasks to Monday');
+    return;
+  }
+  
+  // Push all tasks to Monday
+  const results = await mondaySyncEngine.pushAllTasksToMonday({ force: true });
+  
+  const successful = results.filter(r => r.success).length;
+  console.log(`Successfully migrated ${successful} of ${tasks.length} tasks to Monday`);
+  
+  if (successful < tasks.length) {
+    console.warn('Some tasks failed to migrate. Check logs for details.');
+  }
+}
+
+// Implement other migration functions similarly
+async function migrateLocalToHybrid(dryRun) { /* ... */ }
+async function migrateMondayToLocal(dryRun) { /* ... */ }
+async function migrateMondayToHybrid(dryRun) { /* ... */ }
+async function migrateHybridToLocal(dryRun) { /* ... */ }
+async function migrateHybridToMonday(dryRun) { /* ... */ }
+```
+
+# Test Strategy:
+1. Test migration commands with mocked dependencies
+2. Verify data integrity during migrations
+3. Test rollback capabilities
+4. Test all mode transitions:
+   - local → monday
+   - local → hybrid
+   - monday → local
+   - monday → hybrid
+   - hybrid → local
+   - hybrid → monday
+5. Test with dry run option
+6. Verify configuration updates after migration
+7. Test backup and restore functionality
+8. Integration test with actual Monday.com API
+9. Test error handling and recovery
+10. Run command tests:
+    - `task-master migrate --from=local --to=monday --dry-run`
+    - `task-master migrate --from=local --to=hybrid`
+    - `task-master migrate --from=monday --to=local`

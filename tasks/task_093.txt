@@ -1,0 +1,76 @@
+# Task ID: 93
+# Title: Extend Configuration System for Monday.com Settings
+# Status: pending
+# Dependencies: 92
+# Priority: high
+# Description: Extend the Task Master configuration system to include Monday.com integration settings such as board ID, API token, and column mappings.
+# Details:
+1. Extend the `.taskmasterconfig` schema to include Monday.com integration settings
+2. Add support for environment variable `MONDAY_API_TOKEN`
+3. Implement validation for Monday board accessibility
+
+Extended configuration schema:
+```javascript
+// Extension to existing config schema
+const mondayConfigSchema = {
+  mondayIntegration: {
+    boardId: { type: 'string', required: true },
+    apiToken: { type: 'string', required: false }, // Can be provided via env var
+    columnMapping: {
+      status: { type: 'string', default: 'status' },
+      title: { type: 'string', default: 'name' },
+      description: { type: 'string', default: 'notes' }
+    },
+    syncSettings: {
+      autoSync: { type: 'boolean', default: false },
+      syncSubtasks: { type: 'boolean', default: false }
+    }
+  }
+};
+
+// Function to validate Monday.com configuration
+async function validateMondayConfig(config, mondayClient) {
+  // Check if board is accessible
+  const query = `
+    query {
+      boards(ids: [${config.mondayIntegration.boardId}]) {
+        id
+        name
+        columns {
+          id
+          title
+          type
+        }
+      }
+    }
+  `;
+  
+  try {
+    const result = await mondayClient._executeWithRateLimit(query);
+    if (!result.boards || result.boards.length === 0) {
+      return { valid: false, error: 'Board not found or not accessible' };
+    }
+    return { valid: true, board: result.boards[0] };
+  } catch (error) {
+    return { valid: false, error: error.message };
+  }
+}
+
+// Function to get API token (from config or env var)
+function getMondayApiToken(config) {
+  return config.mondayIntegration?.apiToken || process.env.MONDAY_API_TOKEN;
+}
+```
+
+# Test Strategy:
+1. Create unit tests for the configuration schema:
+   - Test validation of required fields
+   - Test default values for optional fields
+   - Test environment variable fallback for API token
+2. Create integration tests for board validation:
+   - Test with valid board ID 9275265350
+   - Test with invalid board ID
+   - Test with valid board but invalid token
+3. Test the configuration command:
+   - `task-master config monday --board-id=9275265350 --token=$MONDAY_API_TOKEN`
+   - Verify config is saved correctly with `task-master config --show`

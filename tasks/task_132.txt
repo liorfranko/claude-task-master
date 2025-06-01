@@ -1,0 +1,190 @@
+# Task ID: 132
+# Title: Create MCP tools for Monday.com integration
+# Status: pending
+# Dependencies: 131, 130
+# Priority: medium
+# Description: Implement MCP tools accessible via Cursor for Monday.com integration, including push-to-monday, pull-from-monday, sync-tasks, resolve-conflicts, switch-mode, and migrate-mode.
+# Details:
+1. Create MCP tools in `mcp-server/src/tools/`
+2. Implement push-to-monday MCP tool
+3. Implement pull-from-monday MCP tool
+4. Create sync-tasks MCP tool
+5. Add resolve-conflicts MCP tool
+6. Implement switch-mode MCP tool
+7. Create migrate-mode MCP tool
+8. Add progress indicators and detailed error reporting
+
+Implementation details:
+```javascript
+// In mcp-server/src/tools/monday-integration.js
+const { spawn } = require('child_process');
+const path = require('path');
+
+module.exports = {
+  name: 'monday-integration',
+  description: 'Monday.com integration tools',
+  tools: [
+    {
+      name: 'push-to-monday',
+      description: 'Push local tasks to Monday.com',
+      async handler({ taskMasterPath, args = {} }) {
+        const options = [];
+        
+        if (args.taskId) {
+          options.push(`--task-id=${args.taskId}`);
+        }
+        
+        if (args.dryRun) {
+          options.push('--dry-run');
+        }
+        
+        if (args.force) {
+          options.push('--force');
+        }
+        
+        return runTaskMasterCommand(taskMasterPath, ['sync', 'push-to-monday', ...options]);
+      },
+      args: [
+        { name: 'taskId', type: 'number', description: 'Specific task ID to push' },
+        { name: 'dryRun', type: 'boolean', description: 'Simulate without making changes' },
+        { name: 'force', type: 'boolean', description: 'Force push even with conflicts' }
+      ]
+    },
+    {
+      name: 'pull-from-monday',
+      description: 'Pull Monday.com items to local tasks',
+      async handler({ taskMasterPath, args = {} }) {
+        const options = [];
+        
+        if (args.itemId) {
+          options.push(`--item-id=${args.itemId}`);
+        }
+        
+        if (args.dryRun) {
+          options.push('--dry-run');
+        }
+        
+        if (args.force) {
+          options.push('--force');
+        }
+        
+        return runTaskMasterCommand(taskMasterPath, ['sync', 'pull-from-monday', ...options]);
+      },
+      args: [
+        { name: 'itemId', type: 'string', description: 'Specific Monday item ID to pull' },
+        { name: 'dryRun', type: 'boolean', description: 'Simulate without making changes' },
+        { name: 'force', type: 'boolean', description: 'Force pull even with conflicts' }
+      ]
+    },
+    {
+      name: 'sync-status',
+      description: 'Check synchronization status',
+      async handler({ taskMasterPath }) {
+        return runTaskMasterCommand(taskMasterPath, ['sync', 'status']);
+      }
+    },
+    {
+      name: 'resolve-conflicts',
+      description: 'Resolve synchronization conflicts',
+      async handler({ taskMasterPath, args = {} }) {
+        if (!args.conflictId) {
+          return runTaskMasterCommand(taskMasterPath, ['sync', 'conflicts']);
+        }
+        
+        if (!args.strategy) {
+          return { error: 'Missing required argument: strategy (local, monday, or manual)' };
+        }
+        
+        return runTaskMasterCommand(taskMasterPath, [
+          'sync', 'resolve',
+          `--conflict-id=${args.conflictId}`,
+          `--strategy=${args.strategy}`
+        ]);
+      },
+      args: [
+        { name: 'conflictId', type: 'string', description: 'Conflict ID to resolve' },
+        { name: 'strategy', type: 'string', description: 'Resolution strategy: local, monday, or manual' }
+      ]
+    },
+    {
+      name: 'switch-mode',
+      description: 'Switch persistence mode',
+      async handler({ taskMasterPath, args = {} }) {
+        if (!args.mode) {
+          return { error: 'Missing required argument: mode (local, monday, or hybrid)' };
+        }
+        
+        return runTaskMasterCommand(taskMasterPath, ['config', `--set-mode=${args.mode}`]);
+      },
+      args: [
+        { name: 'mode', type: 'string', description: 'Persistence mode: local, monday, or hybrid' }
+      ]
+    },
+    {
+      name: 'migrate-mode',
+      description: 'Migrate between persistence modes',
+      async handler({ taskMasterPath, args = {} }) {
+        if (!args.from || !args.to) {
+          return { error: 'Missing required arguments: from and to modes' };
+        }
+        
+        const options = [
+          `--from=${args.from}`,
+          `--to=${args.to}`
+        ];
+        
+        if (args.dryRun) {
+          options.push('--dry-run');
+        }
+        
+        return runTaskMasterCommand(taskMasterPath, ['migrate', ...options]);
+      },
+      args: [
+        { name: 'from', type: 'string', description: 'Source mode: local, monday, or hybrid' },
+        { name: 'to', type: 'string', description: 'Destination mode: local, monday, or hybrid' },
+        { name: 'dryRun', type: 'boolean', description: 'Simulate without making changes' }
+      ]
+    }
+  ]
+};
+
+async function runTaskMasterCommand(taskMasterPath, args) {
+  return new Promise((resolve, reject) => {
+    const command = spawn(taskMasterPath, args, { stdio: 'pipe' });
+    
+    let stdout = '';
+    let stderr = '';
+    
+    command.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+    
+    command.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+    
+    command.on('close', (code) => {
+      if (code === 0) {
+        resolve({ output: stdout });
+      } else {
+        resolve({ error: stderr || `Command exited with code ${code}` });
+      }
+    });
+    
+    command.on('error', (error) => {
+      reject({ error: error.message });
+    });
+  });
+}
+```
+
+# Test Strategy:
+1. Test all MCP tools with mocked Task Master commands
+2. Verify argument handling and validation
+3. Test output formatting and error reporting
+4. Integration test with actual Task Master commands
+5. Test with various argument combinations
+6. Verify error handling and recovery
+7. Test through Cursor interface
+8. Verify all tools work with actual Monday.com API
+9. Test performance and responsiveness

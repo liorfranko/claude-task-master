@@ -1,0 +1,118 @@
+# Task ID: 97
+# Title: Implement Task Sync Operations
+# Status: pending
+# Dependencies: 96
+# Priority: medium
+# Description: Create functions to sync individual tasks and collections of tasks to Monday.com, with proper error handling and status tracking.
+# Details:
+1. Create functions to sync individual tasks and task collections
+2. Implement sync status tracking
+3. Add error handling and retry logic
+
+Implementation:
+```javascript
+// Add to monday-sync.js
+
+// Sync a single task and update its sync status
+async function syncTaskAndUpdateStatus(task, syncEngine) {
+  console.log(`Syncing task ${task.id}: ${task.title}...`);
+  
+  try {
+    const result = await syncEngine.syncTask(task);
+    
+    if (result.success) {
+      updateTaskSyncStatus(task.id, result.mondayItemId, 'synced');
+      console.log(`Task ${task.id} synced successfully to Monday item ${result.mondayItemId}`);
+      return { success: true, taskId: task.id, mondayItemId: result.mondayItemId };
+    } else {
+      updateTaskSyncStatus(task.id, task.mondayItemId, 'error', result.error);
+      console.error(`Error syncing task ${task.id}: ${result.error}`);
+      return { success: false, taskId: task.id, error: result.error };
+    }
+  } catch (error) {
+    updateTaskSyncStatus(task.id, task.mondayItemId, 'error', error.message);
+    console.error(`Exception syncing task ${task.id}: ${error.message}`);
+    return { success: false, taskId: task.id, error: error.message };
+  }
+}
+
+// Sync all pending tasks
+async function syncPendingTasks(config) {
+  const syncEngine = new MondaySyncEngine(config);
+  const tasks = loadTasks();
+  const pendingTasks = tasks.filter(task => task.syncStatus === 'pending');
+  
+  console.log(`Found ${pendingTasks.length} tasks pending sync`);
+  
+  const results = {
+    total: pendingTasks.length,
+    succeeded: 0,
+    failed: 0,
+    details: []
+  };
+  
+  for (const task of pendingTasks) {
+    const result = await syncTaskAndUpdateStatus(task, syncEngine);
+    results.details.push(result);
+    
+    if (result.success) {
+      results.succeeded++;
+    } else {
+      results.failed++;
+    }
+    
+    // Add a small delay between operations to respect rate limits
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  
+  return results;
+}
+
+// Sync a specific task by ID
+async function syncTaskById(taskId, config) {
+  const syncEngine = new MondaySyncEngine(config);
+  const tasks = loadTasks();
+  const task = tasks.find(t => t.id === taskId);
+  
+  if (!task) {
+    return { success: false, error: `Task with ID ${taskId} not found` };
+  }
+  
+  return await syncTaskAndUpdateStatus(task, syncEngine);
+}
+
+// Sync all tasks (force sync regardless of status)
+async function syncAllTasks(config) {
+  const tasks = loadTasks();
+  
+  // Mark all tasks as pending
+  tasks.forEach(task => {
+    task.syncStatus = 'pending';
+  });
+  saveTasks(tasks);
+  
+  return await syncPendingTasks(config);
+}
+
+module.exports = {
+  MondaySyncEngine,
+  syncTaskAndUpdateStatus,
+  syncPendingTasks,
+  syncTaskById,
+  syncAllTasks
+};
+```
+
+# Test Strategy:
+1. Create unit tests for sync functions:
+   - Test syncTaskAndUpdateStatus with mocked syncEngine
+   - Test syncPendingTasks with mocked tasks
+   - Test syncTaskById with valid and invalid IDs
+   - Test syncAllTasks functionality
+2. Create integration tests:
+   - Test syncing a real task to Monday.com
+   - Test error handling with invalid task data
+   - Test syncing multiple tasks
+3. Test retry logic and status tracking:
+   - Verify task status is updated correctly after sync
+   - Test handling of API errors and rate limits

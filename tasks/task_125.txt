@@ -1,0 +1,141 @@
+# Task ID: 125
+# Title: Implement pull-from-Monday functionality
+# Status: pending
+# Dependencies: 123
+# Priority: high
+# Description: Create the sync engine component that handles pulling Monday.com items to local tasks, including item-to-task mapping and status conversion.
+# Details:
+1. Extend `scripts/modules/monday-sync.js` with one-way sync logic (Monday → local)
+2. Implement Monday-item-to-task mapping based on configuration
+3. Create reverse status mapping from Monday.com to Task Master
+4. Add conflict detection using timestamps and content hashes
+5. Implement error handling and retry logic
+6. Support options for dry run, force sync, and specific item IDs
+
+Implementation details:
+```javascript
+// Add to MondaySyncEngine class
+async function pullTaskFromMonday(mondayItemId, options = {}) {
+  const { dryRun = false, force = false } = options;
+  
+  // Get column mapping from config
+  const columnMapping = config.getMondayColumnMapping();
+  const boardId = config.getMondayBoardId();
+  
+  try {
+    // Get item from Monday
+    const mondayItem = await this.mondayClient.getItem(boardId, mondayItemId);
+    
+    if (!mondayItem) {
+      return { success: false, error: 'Item not found on Monday' };
+    }
+    
+    // Find local task with this Monday ID
+    const tasks = await this.localStorage.loadTasks();
+    let task = tasks.find(t => t.mondayItemId === mondayItemId);
+    let isNewTask = false;
+    
+    if (!task) {
+      // Create new local task
+      isNewTask = true;
+      task = {
+        id: await this.localStorage.getNextTaskId(),
+        mondayItemId,
+        syncStatus: 'pending'
+      };
+    }
+    
+    // Map Monday item to task fields
+    const updatedTask = {
+      ...task,
+      title: mondayItem.name,
+      description: mondayItem.column_values.find(c => c.id === columnMapping.description)?.text || '',
+      status: this._mapStatusFromMonday(mondayItem.column_values.find(c => c.id === columnMapping.status)?.text),
+      priority: this._mapPriorityFromMonday(mondayItem.column_values.find(c => c.id === columnMapping.priority)?.text),
+      lastModifiedMonday: new Date(mondayItem.updated_at).toISOString()
+    };
+    
+    // Check for conflicts
+    if (!isNewTask && !force && task.lastModifiedLocal && new Date(task.lastModifiedLocal) > new Date(task.lastSyncedAt || 0)) {
+      // Local changes exist since last sync
+      return { success: false, conflict: true, localTask: task, mondayTask: updatedTask };
+    }
+    
+    if (dryRun) {
+      console.log(`Would ${isNewTask ? 'create' : 'update'} local task from Monday item ${mondayItemId}:`, updatedTask);
+      return { success: true, dryRun: true };
+    }
+    
+    // Save task locally
+    if (isNewTask) {
+      await this.localStorage.createTask(updatedTask);
+    } else {
+      await this.localStorage.updateTask(updatedTask);
+    }
+    
+    // Update sync status
+    await this.localStorage.markTaskAsSynced(updatedTask.id, mondayItemId);
+    
+    return { success: true, taskId: updatedTask.id, isNewTask };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+async function pullAllTasksFromMonday(options = {}) {
+  const boardId = config.getMondayBoardId();
+  const results = [];
+  
+  try {
+    // Get all items from Monday board
+    const mondayItems = await this.mondayClient.getItems(boardId);
+    
+    for (const item of mondayItems) {
+      if (options.mondayItemId && item.id !== options.mondayItemId) {
+        continue;
+      }
+      
+      const result = await this.pullTaskFromMonday(item.id, options);
+      results.push({ mondayItemId: item.id, ...result });
+    }
+    
+    return results;
+  } catch (error) {
+    console.error('Error pulling tasks from Monday:', error);
+    return [{ success: false, error: error.message }];
+  }
+}
+
+_mapStatusFromMonday(mondayStatus) {
+  // Map Monday status to Task Master status
+  const statusMap = {
+    'Not Started': 'pending',
+    'In Progress': 'in-progress',
+    'Done': 'done'
+  };
+  return statusMap[mondayStatus] || 'pending';
+}
+
+_mapPriorityFromMonday(mondayPriority) {
+  // Map Monday priority to Task Master priority
+  const priorityMap = {
+    'High': 'high',
+    'Medium': 'medium',
+    'Low': 'low'
+  };
+  return priorityMap[mondayPriority] || 'medium';
+}
+```
+
+# Test Strategy:
+1. Unit test the pull functionality with mocked Monday client
+2. Test Monday-to-task mapping with various item data
+3. Test status and priority reverse mapping
+4. Verify conflict detection using timestamps
+5. Test error handling and retry logic
+6. Integration test with actual Monday.com API
+7. Test dry run functionality
+8. Test pulling specific items by ID
+9. Verify force sync option
+10. Test creation of new local tasks from Monday items
+11. Run command test: `task-master update-local-from-monday --dry-run`

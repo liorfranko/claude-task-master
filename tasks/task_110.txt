@@ -1,0 +1,171 @@
+# Task ID: 110
+# Title: Implement Sync Engine for Hybrid Mode
+# Status: pending
+# Dependencies: 105, 108, 109
+# Priority: medium
+# Description: Create a synchronization engine that handles bidirectional sync between local storage and Monday.com in hybrid mode.
+# Details:
+Create `scripts/modules/monday-sync.js` that:  
+1. Implements bidirectional sync logic  
+2. Detects and resolves conflicts  
+3. Tracks sync state and timestamps  
+4. Supports different conflict resolution strategies  
+5. Handles partial sync failures  
+
+Code structure:  
+```javascript
+const persistenceManager = require('./persistence-manager');
+
+class MondaySync {
+  constructor(config) {
+    this.config = config;
+    this.localProvider = persistenceManager.providers['local'];
+    this.mondayProvider = persistenceManager.providers['monday'];
+    this.conflictResolution = config.persistence?.mondayConfig?.syncSettings?.conflictResolution || 'manual';
+    this.conflicts = [];
+  }
+
+  async syncAll() {
+    // Get tasks from both sources
+    const localTasks = await this.localProvider.getTasks();
+    const mondayTasks = await this.mondayProvider.getTasks();
+    
+    // Create maps for quick lookup
+    const localTasksMap = {};
+    localTasks.forEach(task => {
+      localTasksMap[task.id] = task;
+    });
+    
+    const mondayTasksMap = {};
+    mondayTasks.forEach(task => {
+      if (task.id) {
+        mondayTasksMap[task.id] = task;
+      }
+    });
+    
+    // Track results
+    const results = {
+      localToMonday: { created: 0, updated: 0, failed: 0 },
+      mondayToLocal: { created: 0, updated: 0, failed: 0 },
+      conflicts: 0,
+      resolved: 0
+    };
+    
+    // Clear previous conflicts
+    this.conflicts = [];
+    
+    // Process local tasks
+    for (const localTask of localTasks) {
+      try {
+        // Check if task exists in Monday
+        if (localTask.mondayItemId && mondayTasksMap[localTask.id]) {
+          const mondayTask = mondayTasksMap[localTask.id];
+          
+          // Check for conflicts
+          if (this._isConflict(localTask, mondayTask)) {
+            this.conflicts.push({
+              id: this.conflicts.length + 1,
+              taskId: localTask.id,
+              localTask,
+              mondayTask,
+              resolution: null
+            });
+            results.conflicts++;
+            continue;
+          }
+          
+          // Update Monday if local is newer
+          if (this._isLocalNewer(localTask, mondayTask)) {
+            await this.mondayProvider.updateTask(localTask.id, localTask);
+            results.localToMonday.updated++;
+          }
+        } else {
+          // Create new item in Monday
+          const newTask = await this.mondayProvider.createTask(localTask);
+          // Update local task with Monday item ID
+          await this.localProvider.updateTask(localTask.id, {
+            ...localTask,
+            mondayItemId: newTask.mondayItemId,
+            lastSyncedAt: new Date().toISOString(),
+            syncStatus: 'synced'
+          });
+          results.localToMonday.created++;
+        }
+      } catch (error) {
+        console.error(`Error syncing local task ${localTask.id} to Monday:`, error.message);
+        results.localToMonday.failed++;
+      }
+    }
+    
+    // Process Monday tasks (similar logic for Monday to local)
+    // ...
+    
+    // Auto-resolve conflicts if configured
+    if (this.conflictResolution !== 'manual') {
+      await this._resolveConflicts();
+    }
+    
+    return {
+      results,
+      conflicts: this.conflicts
+    };
+  }
+
+  async resolveConflict(conflictId, strategy) {
+    const conflict = this.conflicts.find(c => c.id === conflictId);
+    if (!conflict) {
+      throw new Error(`Conflict with ID ${conflictId} not found`);
+    }
+    
+    if (strategy === 'local') {
+      await this.mondayProvider.updateTask(conflict.localTask.id, conflict.localTask);
+      conflict.resolution = 'local-wins';
+    } else if (strategy === 'monday') {
+      await this.localProvider.updateTask(conflict.localTask.id, {
+        ...conflict.localTask,
+        ...conflict.mondayTask,
+        lastSyncedAt: new Date().toISOString(),
+        syncStatus: 'synced'
+      });
+      conflict.resolution = 'monday-wins';
+    } else {
+      throw new Error(`Invalid resolution strategy: ${strategy}`);
+    }
+    
+    return conflict;
+  }
+
+  _isConflict(localTask, mondayTask) {
+    // Check if both were modified since last sync
+    const lastSynced = new Date(localTask.lastSyncedAt || 0);
+    const localModified = new Date(localTask.lastModifiedLocal || 0);
+    const mondayModified = new Date(localTask.lastModifiedMonday || 0);
+    
+    return localModified > lastSynced && mondayModified > lastSynced;
+  }
+
+  _isLocalNewer(localTask, mondayTask) {
+    const localModified = new Date(localTask.lastModifiedLocal || 0);
+    const mondayModified = new Date(localTask.lastModifiedMonday || 0);
+    
+    return localModified > mondayModified;
+  }
+
+  async _resolveConflicts() {
+    for (const conflict of this.conflicts) {
+      await this.resolveConflict(conflict.id, this.conflictResolution);
+    }
+  }
+}
+
+module.exports = MondaySync;
+```
+
+# Test Strategy:
+1. Unit tests for sync logic with mock providers  
+2. Test conflict detection with various scenarios  
+3. Test different conflict resolution strategies  
+4. Test partial sync failures and recovery  
+5. Test with real Monday.com API using test board 9275265350  
+6. Test performance with large task sets and many conflicts  
+7. Test edge cases like deleted tasks in one system

@@ -1,0 +1,196 @@
+# Task ID: 133
+# Title: Add comprehensive error handling and recovery
+# Status: pending
+# Dependencies: 132
+# Priority: high
+# Description: Implement robust error handling and recovery mechanisms throughout the Monday.com integration to ensure reliability and graceful degradation.
+# Details:
+1. Implement centralized error handling for Monday API calls
+2. Add retry logic for transient errors
+3. Implement graceful degradation with offline fallback
+4. Create error recovery mechanisms for sync operations
+5. Add detailed error logging and reporting
+6. Implement validation and error prevention
+
+Implementation details:
+```javascript
+// In monday-client.js
+class MondayClient {
+  // ... existing code
+  
+  async executeQuery(query, variables = {}) {
+    return this._executeWithRetry(async () => {
+      try {
+        return await this.client.request(query, variables);
+      } catch (error) {
+        // Enhance error with more context
+        const enhancedError = this._enhanceError(error);
+        throw enhancedError;
+      }
+    });
+  }
+  
+  async _executeWithRetry(fn, maxRetries = 3, delay = 1000) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        
+        // Don't retry if it's not a retryable error
+        if (!this._isRetryableError(error)) {
+          break;
+        }
+        
+        // Log retry attempt
+        console.warn(`Retry attempt ${attempt}/${maxRetries} after error: ${error.message}`);
+        
+        // Wait before retrying
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, delay * attempt));
+        }
+      }
+    }
+    
+    throw lastError;
+  }
+  
+  _isRetryableError(error) {
+    // Determine if error is retryable (network issues, rate limits, etc.)
+    if (error.message.includes('network') || 
+        error.message.includes('timeout') || 
+        error.message.includes('rate limit') ||
+        error.status === 429) {
+      return true;
+    }
+    
+    return false;
+  }
+  
+  _enhanceError(error) {
+    // Add more context to the error
+    const enhancedError = new Error(`Monday API Error: ${error.message}`);
+    enhancedError.originalError = error;
+    enhancedError.status = error.response?.status;
+    enhancedError.isOffline = error.message.includes('network') || error.message.includes('timeout');
+    enhancedError.isRateLimited = error.message.includes('rate limit') || error.status === 429;
+    enhancedError.isAuthError = error.message.includes('authentication') || error.status === 401;
+    return enhancedError;
+  }
+}
+
+// In persistence-manager.js
+class PersistenceManager {
+  // ... existing code
+  
+  async executeWithFallback(operation, fallbackOperation) {
+    try {
+      return await operation();
+    } catch (error) {
+      console.error(`Operation failed: ${error.message}`);
+      console.log('Attempting fallback operation...');
+      
+      try {
+        return await fallbackOperation();
+      } catch (fallbackError) {
+        console.error(`Fallback operation also failed: ${fallbackError.message}`);
+        throw new Error(`Operation failed and fallback failed: ${error.message}, ${fallbackError.message}`);
+      }
+    }
+  }
+  
+  async createTask(taskData) {
+    return this.executeWithFallback(
+      // Primary operation
+      () => this.currentProvider.createTask(taskData),
+      // Fallback operation (if in hybrid or monday mode)
+      () => {
+        if (this.getCurrentMode() !== 'local') {
+          console.log('Falling back to local storage due to error');
+          return new LocalStorageProvider(this.localStorage).createTask(taskData);
+        }
+        throw new Error('No fallback available');
+      }
+    );
+  }
+  
+  // Similar pattern for other operations
+}
+
+// In monday-sync.js
+class MondaySyncEngine {
+  // ... existing code
+  
+  async pushTaskToMonday(task, options = {}) {
+    // ... existing code
+    
+    try {
+      // ... existing code
+    } catch (error) {
+      // Enhanced error handling
+      await this.localStorage.updateSyncStatus(task.id, 'error');
+      
+      // Store error details for troubleshooting
+      await this.localStorage.updateTask({
+        ...task,
+        syncError: error.message,
+        syncErrorTimestamp: new Date().toISOString(),
+        syncRetryCount: (task.syncRetryCount || 0) + 1
+      });
+      
+      // Determine if we should retry automatically later
+      const shouldRetryLater = error.isOffline || error.isRateLimited;
+      
+      return { 
+        success: false, 
+        error: error.message,
+        isOffline: error.isOffline,
+        isRateLimited: error.isRateLimited,
+        isAuthError: error.isAuthError,
+        retryLater: shouldRetryLater
+      };
+    }
+  }
+  
+  // Add recovery methods
+  async recoverFailedSyncs() {
+    const errorTasks = await this.localStorage.getTasksBySyncStatus('error');
+    console.log(`Attempting to recover ${errorTasks.length} failed syncs...`);
+    
+    const results = [];
+    
+    for (const task of errorTasks) {
+      // Skip tasks that have been retried too many times
+      if (task.syncRetryCount && task.syncRetryCount > 5) {
+        results.push({
+          taskId: task.id,
+          success: false,
+          error: 'Maximum retry count exceeded',
+          abandoned: true
+        });
+        continue;
+      }
+      
+      // Try to sync again
+      const result = await this.pushTaskToMonday(task, { force: true });
+      results.push({ taskId: task.id, ...result });
+    }
+    
+    return results;
+  }
+}
+```
+
+# Test Strategy:
+1. Test centralized error handling with various error scenarios
+2. Verify retry logic for transient errors
+3. Test graceful degradation with simulated network failures
+4. Verify error recovery mechanisms for sync operations
+5. Test detailed error logging and reporting
+6. Verify validation and error prevention
+7. Test fallback operations in different modes
+8. Integration test with actual Monday.com API
+9. Test recovery of failed syncs
+10. Verify error handling in CLI commands and MCP tools

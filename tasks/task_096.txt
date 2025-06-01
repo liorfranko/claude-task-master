@@ -1,0 +1,152 @@
+# Task ID: 96
+# Title: Implement Monday.com Sync Engine Core
+# Status: pending
+# Dependencies: 92, 93, 95
+# Priority: high
+# Description: Create the core sync engine that maps Task Master tasks to Monday.com items and handles the synchronization logic.
+# Details:
+1. Create `scripts/modules/monday-sync.js` with core sync logic
+2. Implement task-to-Monday-item mapping
+3. Add status mapping functionality
+4. Implement create and update operations
+
+Sync engine implementation:
+```javascript
+const { MondayClient } = require('./monday-client');
+const { getMondayApiToken } = require('./config-utils');
+
+class MondaySyncEngine {
+  constructor(config) {
+    this.config = config;
+    const token = getMondayApiToken(config);
+    if (!token) {
+      throw new Error('Monday API token not found in config or environment variables');
+    }
+    this.client = new MondayClient(token);
+    this.boardId = config.mondayIntegration.boardId;
+    this.columnMapping = config.mondayIntegration.columnMapping;
+  }
+
+  // Map Task Master status to Monday status
+  mapStatus(taskStatus) {
+    const statusMap = {
+      'pending': 'Not Started',
+      'in_progress': 'Working on it',
+      'done': 'Done'
+    };
+    return statusMap[taskStatus] || 'Not Started';
+  }
+
+  // Create a new item on Monday board
+  async createItem(task) {
+    const mutation = `
+      mutation {
+        create_item(board_id: ${this.boardId}, item_name: "${task.title}") {
+          id
+        }
+      }
+    `;
+    
+    try {
+      const result = await this.client._executeWithRateLimit(mutation);
+      const mondayItemId = result.create_item.id;
+      
+      // Update item with additional fields
+      await this.updateItemFields(mondayItemId, task);
+      
+      return {
+        success: true,
+        mondayItemId
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Update existing item on Monday board
+  async updateItem(mondayItemId, task) {
+    try {
+      await this.updateItemFields(mondayItemId, task);
+      return {
+        success: true,
+        mondayItemId
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  // Update item fields based on column mapping
+  async updateItemFields(mondayItemId, task) {
+    // Update status
+    if (this.columnMapping.status) {
+      const mondayStatus = this.mapStatus(task.status);
+      const mutation = `
+        mutation {
+          change_column_value(board_id: ${this.boardId}, item_id: ${mondayItemId}, column_id: "${this.columnMapping.status}", value: "{\"label\":\"${mondayStatus}\"}") {
+            id
+          }
+        }
+      `;
+      await this.client._executeWithRateLimit(mutation);
+    }
+    
+    // Update description/notes
+    if (this.columnMapping.description && task.description) {
+      const mutation = `
+        mutation {
+          change_column_value(board_id: ${this.boardId}, item_id: ${mondayItemId}, column_id: "${this.columnMapping.description}", value: "{\"text\":\"${task.description.replace(/\n/g, '\\n').replace(/"/g, '\\"')}\"}") {
+            id
+          }
+        }
+      `;
+      await this.client._executeWithRateLimit(mutation);
+    }
+    
+    // Additional fields can be added here
+  }
+
+  // Sync a single task to Monday
+  async syncTask(task) {
+    try {
+      let result;
+      
+      if (task.mondayItemId) {
+        // Update existing item
+        result = await this.updateItem(task.mondayItemId, task);
+      } else {
+        // Create new item
+        result = await this.createItem(task);
+      }
+      
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+
+module.exports = { MondaySyncEngine };
+```
+
+# Test Strategy:
+1. Create unit tests for the sync engine:
+   - Test status mapping function
+   - Test item creation with mocked client
+   - Test item update with mocked client
+   - Test error handling
+2. Create integration tests:
+   - Test with real Monday.com API and test board 9275265350
+   - Test creating a new item
+   - Test updating an existing item
+   - Test handling API errors
+3. Test with different task statuses and verify correct mapping

@@ -1,0 +1,147 @@
+# Task ID: 131
+# Title: Implement sync status commands and reporting
+# Status: pending
+# Dependencies: 128
+# Priority: medium
+# Description: Create commands for checking sync status, viewing pending changes, and monitoring synchronization health.
+# Details:
+1. Implement `task-master sync status` command
+2. Add detailed reporting of sync status for all tasks
+3. Create commands for viewing pending changes
+4. Implement sync health monitoring
+5. Add error reporting and troubleshooting guidance
+
+Implementation details:
+```javascript
+// In commands.js
+async function handleSyncStatus(args) {
+  const persistenceManager = require('./modules/persistence-manager');
+  const localStorage = require('./modules/local-storage');
+  const config = require('./config');
+  
+  const currentMode = config.getPersistenceMode() || 'local';
+  console.log(`Current persistence mode: ${currentMode}`);
+  
+  if (currentMode === 'local') {
+    console.log('In local mode, no synchronization is performed.');
+    return;
+  }
+  
+  // Get sync statistics
+  const tasks = await localStorage.loadTasks();
+  const syncStats = {
+    total: tasks.length,
+    synced: 0,
+    pending: 0,
+    conflict: 0,
+    error: 0,
+    notSynced: 0
+  };
+  
+  for (const task of tasks) {
+    if (!task.mondayItemId) {
+      syncStats.notSynced++;
+    } else if (task.syncStatus === 'synced') {
+      syncStats.synced++;
+    } else if (task.syncStatus === 'pending') {
+      syncStats.pending++;
+    } else if (task.syncStatus === 'conflict') {
+      syncStats.conflict++;
+    } else if (task.syncStatus === 'error') {
+      syncStats.error++;
+    }
+  }
+  
+  console.log('\nSync Status Summary:');
+  console.log(`Total tasks: ${syncStats.total}`);
+  console.log(`Synced: ${syncStats.synced}`);
+  console.log(`Pending: ${syncStats.pending}`);
+  console.log(`Conflicts: ${syncStats.conflict}`);
+  console.log(`Errors: ${syncStats.error}`);
+  console.log(`Not synced: ${syncStats.notSynced}`);
+  
+  // Show last sync time
+  const lastSyncTimes = tasks
+    .filter(t => t.lastSyncedAt)
+    .map(t => new Date(t.lastSyncedAt).getTime());
+  
+  if (lastSyncTimes.length > 0) {
+    const lastSync = new Date(Math.max(...lastSyncTimes));
+    console.log(`\nLast successful sync: ${lastSync.toLocaleString()}`);
+  } else {
+    console.log('\nNo successful syncs recorded.');
+  }
+  
+  // Show pending changes
+  if (syncStats.pending > 0) {
+    console.log('\nPending changes:');
+    const pendingTasks = tasks.filter(t => t.syncStatus === 'pending');
+    for (const task of pendingTasks) {
+      console.log(`- Task ${task.id}: ${task.title} (last modified: ${new Date(task.lastModifiedLocal).toLocaleString()})`);
+    }
+    console.log('\nSync pending changes with: task-master sync push-to-monday');
+  }
+  
+  // Show conflicts
+  if (syncStats.conflict > 0) {
+    console.log('\nConflicts detected:');
+    const conflictTasks = tasks.filter(t => t.syncStatus === 'conflict');
+    for (const task of conflictTasks) {
+      console.log(`- Task ${task.id}: ${task.title}`);
+    }
+    console.log('\nView conflicts with: task-master sync conflicts');
+    console.log('Resolve conflicts with: task-master sync resolve --conflict-id=X --strategy=local|monday|manual');
+  }
+  
+  // Show errors
+  if (syncStats.error > 0) {
+    console.log('\nSync errors:');
+    const errorTasks = tasks.filter(t => t.syncStatus === 'error');
+    for (const task of errorTasks) {
+      console.log(`- Task ${task.id}: ${task.title}`);
+    }
+    console.log('\nRetry failed syncs with: task-master sync push-to-monday --force');
+  }
+  
+  // Connection test
+  try {
+    const mondayClient = require('./modules/monday-client');
+    await mondayClient.testConnection();
+    console.log('\nMonday.com API connection: ✅ Connected');
+  } catch (error) {
+    console.log(`\nMonday.com API connection: ❌ Error - ${error.message}`);
+    console.log('Check your API token and internet connection.');
+  }
+}
+
+// Update handleSyncCommands to include status
+async function handleSyncCommands(args) {
+  const subcommand = args._[1];
+  
+  switch (subcommand) {
+    case 'push-to-monday':
+      return updateMondayFromLocal(args);
+    case 'pull-from-monday':
+      return updateLocalFromMonday(args);
+    case 'status':
+      return handleSyncStatus(args);
+    case 'conflicts':
+    case 'resolve':
+      return handleSyncConflicts(args);
+    default:
+      console.error(`Unknown sync subcommand: ${subcommand}`);
+      console.log('Available subcommands: push-to-monday, pull-from-monday, status, conflicts, resolve');
+  }
+}
+```
+
+# Test Strategy:
+1. Test sync status command with various task states
+2. Verify reporting of sync statistics
+3. Test pending changes display
+4. Verify conflict reporting
+5. Test error reporting and troubleshooting guidance
+6. Integration test with actual Monday.com API
+7. Test with different persistence modes
+8. Verify connection test functionality
+9. Run command test: `task-master sync status`
