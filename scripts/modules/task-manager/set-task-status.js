@@ -8,6 +8,7 @@ import { validateTaskDependencies } from '../dependency-manager.js';
 import { getDebugFlag } from '../config-manager.js';
 import updateSingleTaskStatus from './update-single-task-status.js';
 import generateTaskFiles from './generate-task-files.js';
+import { markTaskForSync } from './monday-sync-utils.js';
 import {
 	isValidTaskStatus,
 	TASK_STATUS_OPTIONS
@@ -62,6 +63,16 @@ async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
 
 		// Write the updated tasks to the file
 		writeJSON(tasksPath, data);
+
+		// Mark tasks for Monday.com sync unless this is part of a sync operation
+		// Check if any of the updated tasks have Monday sync data to avoid marking during sync
+		for (const id of updatedTasks) {
+			const task = findTaskById(data.tasks, id);
+			if (task && (!task.mondayItemId || !options.skipMondaySync)) {
+				markTaskForSync(tasksPath, id);
+				log('info', `Task ${id} marked for Monday.com sync`);
+			}
+		}
 
 		// Validate dependencies after status update
 		log('info', 'Validating dependencies after status update...');

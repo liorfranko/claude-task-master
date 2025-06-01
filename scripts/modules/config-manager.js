@@ -71,9 +71,7 @@ const DEFAULTS = {
 			description: 'notes'
 		},
 		syncSettings: {
-			autoSync: false,
-			syncSubtasks: false
-		}
+			autoSync: false		}
 	}
 };
 
