@@ -2510,7 +2510,7 @@ Examples:
 				const { 
 					getMondayIntegrationConfig, 
 					updateMondayConfig, 
-					validateMondayConfig 
+					getMondayColumnMapping
 				} = await import('./config-manager.js');
 
 				// Show current configuration
@@ -2530,13 +2530,44 @@ Examples:
 
 				// Validate configuration
 				if (options.validate) {
-					const validation = await validateMondayConfig();
-					if (validation.isValid) {
+					const { validateMondayConfigWithBoardInfo } = await import('./config-manager.js');
+					const validation = await validateMondayConfigWithBoardInfo(null, null, true);
+					
+					if (validation.valid) {
 						console.log('✅ Monday.com configuration is valid');
-						console.log(`📋 Connected to board: ${validation.boardId}`);
+						console.log(`📋 Connected to board: ${validation.boardName} (ID: ${validation.boardId})`);
+						
+						if (validation.boardInfo && validation.boardInfo.columns) {
+							console.log('\n📊 Available Board Columns:');
+							validation.boardInfo.columns.forEach(column => {
+								console.log(`  - Column ID: "${column.id}"`);
+								console.log(`    Title: ${column.title}`);
+								console.log(`    Type: ${column.type}`);
+								console.log('');
+							});
+							
+							console.log('🔧 Current Column Mapping:');
+							const columnMapping = getMondayColumnMapping();
+							Object.entries(columnMapping).forEach(([key, value]) => {
+								const columnExists = validation.boardInfo.columns.find(col => col.id === value);
+								const status = columnExists ? '✅' : '❌';
+								console.log(`  ${key}: "${value}" ${status}`);
+								if (!columnExists) {
+									console.log(`    ↳ Column "${value}" not found on board`);
+								}
+							});
+						}
 					} else {
 						console.error('❌ Monday.com configuration is invalid:');
 						validation.errors.forEach(error => console.error(`  - ${error}`));
+						
+						// If we have board info despite errors, show available columns
+						if (validation.boardInfo && validation.boardInfo.columns) {
+							console.log('\n📊 Available Board Columns (for reference):');
+							validation.boardInfo.columns.forEach(column => {
+								console.log(`  - Column ID: "${column.id}" (${column.title})`);
+							});
+						}
 						process.exit(1);
 					}
 					return;
@@ -2714,6 +2745,332 @@ Examples:
 					console.error(chalk.red(`Error: ${error.message}`));
 					process.exit(1);
 				}
+			}
+		});
+
+	// Monday.com Sync Commands
+	programInstance
+		.command('sync-monday')
+		.description('Sync all tasks to Monday.com board')
+		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('--task-id <id>', 'Sync only a specific task by ID')
+		.option('--dry-run', 'Show what would be synced without making changes')
+		.action(async (options) => {
+			try {
+				const projectRoot = findProjectRoot();
+				if (!projectRoot) {
+					console.error(chalk.red('Error: Could not find project root directory'));
+					process.exit(1);
+				}
+
+				const { 
+					getMondayIntegrationConfig,
+					getMondayApiToken
+				} = await import('./config-manager.js');
+				
+				const { createMondaySyncEngine } = await import('./monday-sync.js');
+
+				// Check if Monday.com integration is configured
+				const config = getMondayIntegrationConfig(projectRoot);
+				if (!config || !config.boardId) {
+					console.error(chalk.red('Error: Monday.com integration not configured.'));
+					console.log(chalk.yellow('Run "task-master config-monday" first to configure the integration.'));
+					process.exit(1);
+				}
+
+				// Check if API token is available
+				const token = getMondayApiToken(projectRoot);
+				if (!token) {
+					console.error(chalk.red('Error: Monday.com API token not found.'));
+					console.log(chalk.yellow('Set MONDAY_API_TOKEN environment variable or configure via "task-master config-monday --token=YOUR_TOKEN"'));
+					process.exit(1);
+				}
+
+				const tasksPath = path.resolve(options.file);
+				if (!fs.existsSync(tasksPath)) {
+					console.error(chalk.red(`Error: Tasks file not found at ${tasksPath}`));
+					process.exit(1);
+				}
+
+				const tasks = readJSON(tasksPath);
+				if (!tasks || !tasks.tasks) {
+					console.error(chalk.red('Error: Invalid tasks file format'));
+					process.exit(1);
+				}
+
+				// Handle dry run mode
+				if (options.dryRun) {
+					console.log(chalk.blue('🔍 Dry run mode - no changes will be made to Monday.com\n'));
+					
+					if (options.taskId) {
+						const taskId = parseInt(options.taskId);
+						const task = tasks.tasks.find(t => t.id === taskId);
+						if (task) {
+							console.log(chalk.green(`Would sync task ${task.id}: ${task.title}`));
+							if (task.mondayItemId) {
+								console.log(chalk.yellow(`  → Update existing Monday item ${task.mondayItemId}`));
+							} else {
+								console.log(chalk.blue('  → Create new Monday item'));
+							}
+						} else {
+							console.error(chalk.red(`Task with ID ${options.taskId} not found`));
+							process.exit(1);
+						}
+					} else {
+						// Always sync all tasks
+						const itemsToSync = tasks.tasks.map(task => ({ type: 'task', id: task.id, task }));
+						
+						console.log(chalk.green(`Would sync ${itemsToSync.length} items:`));
+						itemsToSync.forEach(item => {
+							if (item.type === 'task') {
+								console.log(chalk.blue(`  - Task ${item.id}: ${item.task.title}`));
+							} else {
+								console.log(chalk.blue(`  - Subtask ${item.id}: ${item.task.title}`));
+							}
+						});
+					}
+					return;
+				}
+
+				// Create sync engine
+				let syncEngine;
+				try {
+					syncEngine = createMondaySyncEngine(projectRoot);
+				} catch (error) {
+					console.error(chalk.red(`Error creating sync engine: ${error.message}`));
+					process.exit(1);
+				}
+
+				// Perform actual sync
+				const spinner = ora('Initializing Monday.com sync...').start();
+
+				try {
+					if (options.taskId) {
+						// Sync specific task
+						const taskId = parseInt(options.taskId);
+						const task = tasks.tasks.find(t => t.id === taskId);
+						
+						if (!task) {
+							spinner.fail(chalk.red(`Task with ID ${options.taskId} not found`));
+							process.exit(1);
+						}
+
+						spinner.text = `Syncing task ${taskId} to Monday.com...`;
+						const result = await syncEngine.syncTask(task, tasksPath, taskId.toString());
+						
+						if (result.success) {
+							spinner.succeed(chalk.green(`✅ Task ${taskId} synced successfully to Monday item ${result.mondayItemId}`));
+						} else {
+							spinner.fail(chalk.red(`❌ Error syncing task ${taskId}: ${result.error}`));
+							process.exit(1);
+						}
+					} else {
+						// Always sync all tasks
+						const itemsToSync = tasks.tasks.map(task => ({ type: 'task', id: task.id, task }));
+						
+						if (itemsToSync.length === 0) {
+							spinner.succeed(chalk.green('✅ No tasks to sync'));
+							return;
+						}
+
+						spinner.text = `Syncing ${itemsToSync.length} items to Monday.com...`;
+						const results = await syncEngine.syncAll(tasksPath);
+						
+						spinner.stop();
+						
+						console.log(chalk.green(`\n📊 Sync completed:`));
+						console.log(chalk.green(`  ✅ Succeeded: ${results.synced}`));
+						console.log(chalk.red(`  ❌ Failed: ${results.errors}`));
+						console.log(chalk.blue(`  📋 Total: ${results.totalItems}`));
+						
+						if (results.errors > 0) {
+							console.log(chalk.red('\n❌ Failed items:'));
+							results.details.filter(d => !d.success).forEach(detail => {
+								console.log(chalk.red(`  - ${detail.type} ${detail.id}: ${detail.title} - ${detail.error}`));
+							});
+							process.exit(1);
+						} else {
+							console.log(chalk.green('\n🎉 All items synced successfully!'));
+						}
+					}
+				} catch (error) {
+					spinner.fail(chalk.red(`Exception during sync: ${error.message}`));
+					console.error(chalk.gray(error.stack));
+					process.exit(1);
+				}
+
+			} catch (error) {
+				console.error(chalk.red(`Error syncing to Monday.com: ${error.message}`));
+				process.exit(1);
+			}
+		});
+
+	// Monday.com Status Command
+	programInstance
+		.command('monday-status')
+		.description('Show Monday.com sync status')
+		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('--verbose', 'Show detailed status information')
+		.action(async (options) => {
+			try {
+				const projectRoot = findProjectRoot();
+				if (!projectRoot) {
+					console.error(chalk.red('Error: Could not find project root directory'));
+					process.exit(1);
+				}
+
+				const { 
+					getMondayIntegrationConfig,
+					getMondayApiToken
+				} = await import('./config-manager.js');
+				
+				const { getTasksNeedingSync } = await import('./task-manager/monday-sync-utils.js');
+
+				// Check if Monday.com integration is configured
+				const config = getMondayIntegrationConfig(projectRoot);
+				if (!config || !config.boardId) {
+					console.error(chalk.red('Error: Monday.com integration not configured.'));
+					console.log(chalk.yellow('Run "task-master config-monday" first to configure the integration.'));
+					process.exit(1);
+				}
+
+				const tasksPath = path.resolve(options.file);
+				if (!fs.existsSync(tasksPath)) {
+					console.error(chalk.red(`Error: Tasks file not found at ${tasksPath}`));
+					process.exit(1);
+				}
+
+				const tasks = readJSON(tasksPath);
+				if (!tasks || !tasks.tasks) {
+					console.error(chalk.red('Error: Invalid tasks file format'));
+					process.exit(1);
+				}
+
+				// Calculate sync statistics
+				const syncedTasks = tasks.tasks.filter(t => t.mondayItemId && t.syncStatus === 'synced');
+				const pendingItems = getTasksNeedingSync(tasksPath);
+				const errorTasks = tasks.tasks.filter(t => t.syncStatus === 'error');
+				
+				// Count subtasks separately
+				let totalSubtasks = 0;
+				let syncedSubtasks = 0;
+				let errorSubtasks = 0;
+				
+				tasks.tasks.forEach(task => {
+					if (task.subtasks) {
+						totalSubtasks += task.subtasks.length;
+						syncedSubtasks += task.subtasks.filter(st => st.mondayItemId && st.syncStatus === 'synced').length;
+						errorSubtasks += task.subtasks.filter(st => st.syncStatus === 'error').length;
+					}
+				});
+
+				// Display status
+				console.log(chalk.blue('\n📋 Monday.com Sync Status'));
+				console.log(chalk.blue('================================\n'));
+				
+				// Configuration info
+				console.log(chalk.green('⚙️  Configuration:'));
+				console.log(`   Board ID: ${chalk.yellow(config.boardId)}`);
+				console.log(`   API Token: ${getMondayApiToken(projectRoot) ? chalk.green('✅ Set') : chalk.red('❌ Not set')}`);
+				
+				// Overall statistics
+				console.log(chalk.green('\n📊 Overall Statistics:'));
+				console.log(`   Total tasks: ${chalk.blue(tasks.tasks.length)}`);
+				console.log(`   Total subtasks: ${chalk.blue(totalSubtasks)}`);
+				console.log(`   Synced tasks: ${chalk.green(syncedTasks.length)}`);
+				console.log(`   Synced subtasks: ${chalk.green(syncedSubtasks)}`);
+				console.log(`   Pending sync: ${chalk.yellow(pendingItems.length)}`);
+				console.log(`   Failed tasks: ${chalk.red(errorTasks.length)}`);
+				console.log(`   Failed subtasks: ${chalk.red(errorSubtasks)}`);
+
+				// Show failed items
+				if (errorTasks.length > 0 || errorSubtasks > 0) {
+					console.log(chalk.red('\n❌ Items with sync errors:'));
+					
+					// Failed tasks
+					errorTasks.forEach(task => {
+						console.log(chalk.red(`   Task ${task.id}: ${task.title}`));
+						if (task.syncError) {
+							console.log(chalk.gray(`     Error: ${task.syncError}`));
+						}
+					});
+					
+					// Failed subtasks
+					tasks.tasks.forEach(task => {
+						if (task.subtasks) {
+							task.subtasks.filter(st => st.syncStatus === 'error').forEach(subtask => {
+								console.log(chalk.red(`   Subtask ${task.id}.${subtask.id}: ${subtask.title}`));
+								if (subtask.syncError) {
+									console.log(chalk.gray(`     Error: ${subtask.syncError}`));
+								}
+							});
+						}
+					});
+				}
+
+				// Show pending items
+				if (pendingItems.length > 0) {
+					console.log(chalk.yellow('\n⏳ Items pending sync:'));
+					pendingItems.forEach(item => {
+						if (item.type === 'task') {
+							console.log(chalk.yellow(`   Task ${item.id}: ${item.task.title}`));
+						} else {
+							console.log(chalk.yellow(`   Subtask ${item.id}: ${item.task.title}`));
+						}
+					});
+				}
+
+				// Verbose mode - show detailed information
+				if (options.verbose) {
+					console.log(chalk.blue('\n🔍 Detailed Information:'));
+					
+					console.log(chalk.green('\n✅ Successfully synced tasks:'));
+					if (syncedTasks.length === 0) {
+						console.log(chalk.gray('   None'));
+					} else {
+						syncedTasks.forEach(task => {
+							console.log(chalk.green(`   Task ${task.id}: ${task.title}`));
+							console.log(chalk.gray(`     Monday Item ID: ${task.mondayItemId}`));
+							if (task.lastSyncedAt) {
+								console.log(chalk.gray(`     Last synced: ${new Date(task.lastSyncedAt).toLocaleString()}`));
+							}
+						});
+					}
+					
+					console.log(chalk.green('\n✅ Successfully synced subtasks:'));
+					const syncedSubtasksList = [];
+					tasks.tasks.forEach(task => {
+						if (task.subtasks) {
+							task.subtasks.filter(st => st.mondayItemId && st.syncStatus === 'synced').forEach(subtask => {
+								syncedSubtasksList.push({ parentId: task.id, subtask });
+							});
+						}
+					});
+					
+					if (syncedSubtasksList.length === 0) {
+						console.log(chalk.gray('   None'));
+					} else {
+						syncedSubtasksList.forEach(({ parentId, subtask }) => {
+							console.log(chalk.green(`   Subtask ${parentId}.${subtask.id}: ${subtask.title}`));
+							console.log(chalk.gray(`     Monday Item ID: ${subtask.mondayItemId}`));
+							if (subtask.lastSyncedAt) {
+								console.log(chalk.gray(`     Last synced: ${new Date(subtask.lastSyncedAt).toLocaleString()}`));
+							}
+						});
+					}
+				}
+
+				// Suggest next steps
+				if (pendingItems.length > 0) {
+					console.log(chalk.blue('\n💡 Next steps:'));
+					console.log(chalk.yellow('   Run "task-master sync-monday" to sync all tasks'));
+				} else if (errorTasks.length === 0 && errorSubtasks === 0) {
+					console.log(chalk.green('\n🎉 All items are in sync!'));
+				}
+
+			} catch (error) {
+				console.error(chalk.red(`Error getting Monday.com status: ${error.message}`));
+				process.exit(1);
 			}
 		});
 

@@ -1,6 +1,6 @@
 # Task ID: 96
 # Title: Implement Monday.com Sync Engine Core
-# Status: pending
+# Status: done
 # Dependencies: 92, 93, 95
 # Priority: high
 # Description: Create the core sync engine that maps Task Master tasks to Monday.com items and handles the synchronization logic.

@@ -1,6 +1,6 @@
 # Task ID: 98
 # Title: Implement CLI Commands for Monday Sync
-# Status: pending
+# Status: done
 # Dependencies: 97
 # Priority: medium
 # Description: Add CLI commands to trigger Monday.com sync operations and view sync status.

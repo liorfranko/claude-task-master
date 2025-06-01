@@ -797,12 +797,13 @@ function getMondaySyncSettings(explicitRoot = null) {
 }
 
 /**
- * Validates the Monday.com configuration
+ * Validates the Monday.com configuration with optional board information fetching
  * @param {string|null} explicitRoot - Optional explicit path to the project root
  * @param {object} session - Session object for MCP context
- * @returns {object} Validation result with { valid: boolean, errors: string[] }
+ * @param {boolean} fetchBoardInfo - Whether to fetch actual board information from Monday.com
+ * @returns {Promise<object>} Validation result with { valid: boolean, errors: string[], boardId?: string, boardName?: string, boardInfo?: object }
  */
-function validateMondayConfig(explicitRoot = null, session = null) {
+async function validateMondayConfigWithBoardInfo(explicitRoot = null, session = null, fetchBoardInfo = false) {
 	const errors = [];
 	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
 	
@@ -828,21 +829,51 @@ function validateMondayConfig(explicitRoot = null, session = null) {
 		}
 	}
 	
-	return {
+	const result = {
 		valid: errors.length === 0,
 		errors
 	};
-}
-
-/**
- * Checks if Monday.com integration is configured and ready to use
- * @param {string|null} explicitRoot - Optional explicit path to the project root
- * @param {object} session - Session object for MCP context
- * @returns {boolean} True if Monday.com integration is properly configured
- */
-function isMondayConfigured(explicitRoot = null, session = null) {
-	const validation = validateMondayConfig(explicitRoot, session);
-	return validation.valid;
+	
+	// If basic validation passes and we should fetch board info, do the API call
+	if (result.valid && fetchBoardInfo && apiToken && mondayConfig.boardId) {
+		try {
+			const { MondayClient } = await import('./monday-client.js');
+			const client = new MondayClient(apiToken);
+			const boardResult = await client.testBoardAccess(mondayConfig.boardId);
+			
+			if (boardResult.success) {
+				result.boardInfo = boardResult.data;
+				result.boardName = boardResult.data.name;
+				result.boardId = mondayConfig.boardId;
+				
+				// Check if configured column IDs actually exist on the board
+				const availableColumnIds = boardResult.data.columns.map(col => col.id);
+				const configuredColumns = getMondayColumnMapping(explicitRoot);
+				
+				for (const [mappingKey, columnId] of Object.entries(configuredColumns)) {
+					if (!availableColumnIds.includes(columnId)) {
+						errors.push(`Column ID "${columnId}" (mapped to ${mappingKey}) does not exist on board. Available columns: ${availableColumnIds.join(', ')}`);
+					}
+				}
+				
+				// Update validity based on column validation
+				result.valid = errors.length === 0;
+				result.errors = errors;
+			} else {
+				errors.push(`Failed to access Monday.com board: ${boardResult.error}`);
+				result.valid = false;
+				result.errors = errors;
+			}
+		} catch (error) {
+			errors.push(`Error connecting to Monday.com: ${error.message}`);
+			result.valid = false;
+			result.errors = errors;
+		}
+	} else if (result.valid) {
+		result.boardId = mondayConfig.boardId;
+	}
+	
+	return result;
 }
 
 /**
@@ -937,7 +968,6 @@ export {
 	getMondayApiToken,
 	getMondayColumnMapping,
 	getMondaySyncSettings,
-	validateMondayConfig,
-	isMondayConfigured,
+	validateMondayConfigWithBoardInfo,
 	updateMondayConfig
 };

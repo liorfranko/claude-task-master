@@ -175,7 +175,7 @@ export function updateSubtaskSyncStatus(tasksPath, subtaskId, mondayItemId, stat
  * @param {string} tasksPath - Path to tasks.json file
  * @returns {Array} Array of tasks that need syncing
  */
-export function getTasksNeedingSync(tasksPath) {
+  export function getTasksNeedingSync(tasksPath) {
   try {
     const data = readJSON(tasksPath);
     if (!data || !data.tasks) {

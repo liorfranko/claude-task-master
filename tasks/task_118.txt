@@ -1,7 +1,7 @@
 # Task ID: 118
 # Title: Create Documentation and User Guides
 # Status: pending
-# Dependencies: 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116
+# Dependencies: 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 116
 # Priority: low
 # Description: Create comprehensive documentation and user guides for the Monday.com integration, including setup instructions, mode comparison, and command reference.
 # Details:

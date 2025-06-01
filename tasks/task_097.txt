@@ -1,6 +1,6 @@
 # Task ID: 97
 # Title: Implement Task Sync Operations
-# Status: pending
+# Status: done
 # Dependencies: 96
 # Priority: medium
 # Description: Create functions to sync individual tasks and collections of tasks to Monday.com, with proper error handling and status tracking.

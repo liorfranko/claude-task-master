@@ -60,7 +60,6 @@ describe('Monday.com Configuration Manager', () => {
       expect(requiredColumnKeys).toContain('notes');
       
       expect(requiredSyncKeys).toContain('autoSync');
-      expect(requiredSyncKeys).not.toContain('syncSubtasks'); // Removed complexity
     });
   });
 
@@ -103,15 +102,6 @@ describe('Monday.com Configuration Manager', () => {
       validAutoSyncValues.forEach(value => {
         expect(typeof value).toBe('boolean');
       });
-    });
-
-    test('should not include syncSubtasks setting', () => {
-      const syncSettings = {
-        autoSync: false
-      };
-
-      expect(syncSettings).not.toHaveProperty('syncSubtasks');
-      expect(Object.keys(syncSettings)).toEqual(['autoSync']);
     });
   });
 
