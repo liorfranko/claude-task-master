@@ -86,6 +86,17 @@ const DEFAULT_CONFIG = {
 		defaultPriority: 'medium',
 		projectName: 'Task Master',
 		ollamaBaseUrl: 'http://localhost:11434/api'
+	},
+	mondayIntegration: {
+		boardId: null,
+		columnMapping: {
+			status: 'status',
+			title: 'name',
+			description: 'notes'
+		},
+		syncSettings: {
+			autoSync: false
+		}
 	}
 };
 
@@ -345,7 +356,8 @@ describe('getConfig Tests', () => {
 					...VALID_CUSTOM_CONFIG.models.fallback
 				}
 			},
-			global: { ...DEFAULT_CONFIG.global, ...VALID_CUSTOM_CONFIG.global }
+			global: { ...DEFAULT_CONFIG.global, ...VALID_CUSTOM_CONFIG.global },
+			mondayIntegration: { ...DEFAULT_CONFIG.mondayIntegration }
 		};
 		expect(config).toEqual(expectedMergedConfig);
 		expect(fsExistsSyncSpy).toHaveBeenCalledWith(MOCK_CONFIG_PATH);
@@ -383,7 +395,8 @@ describe('getConfig Tests', () => {
 				research: { ...DEFAULT_CONFIG.models.research },
 				fallback: { ...DEFAULT_CONFIG.models.fallback }
 			},
-			global: { ...DEFAULT_CONFIG.global, ...PARTIAL_CONFIG.global }
+			global: { ...DEFAULT_CONFIG.global, ...PARTIAL_CONFIG.global },
+			mondayIntegration: { ...DEFAULT_CONFIG.mondayIntegration }
 		};
 		expect(config).toEqual(expectedMergedConfig);
 		expect(fsReadFileSyncSpy).toHaveBeenCalledWith(MOCK_CONFIG_PATH, 'utf-8');
@@ -487,7 +500,8 @@ describe('getConfig Tests', () => {
 				},
 				fallback: { ...DEFAULT_CONFIG.models.fallback }
 			},
-			global: { ...DEFAULT_CONFIG.global, ...INVALID_PROVIDER_CONFIG.global }
+			global: { ...DEFAULT_CONFIG.global, ...INVALID_PROVIDER_CONFIG.global },
+			mondayIntegration: { ...DEFAULT_CONFIG.mondayIntegration }
 		};
 		expect(config).toEqual(expectedMergedConfig);
 	});
