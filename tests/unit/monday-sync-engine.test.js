@@ -16,7 +16,8 @@ const mockConfig = {
     status: 'status_column',
     description: 'notes_column',
     details: 'details_column',
-    priority: 'priority_column'
+    priority: 'priority_column',
+    taskId: 'task_id_column'
   }
 };
 
@@ -217,6 +218,7 @@ describe('MondaySyncEngine', () => {
 
   describe('updateItemFields', () => {
     const mockTask = {
+      id: 15,
       title: 'Test Task',
       description: 'Test description',
       details: 'Test details',
@@ -229,8 +231,8 @@ describe('MondaySyncEngine', () => {
 
       await syncEngine.updateItemFields('12345', mockTask);
 
-      // Should make calls for status, description, details, and priority
-      expect(mockClientInstance._executeWithRateLimit).toHaveBeenCalledTimes(4);
+      // Should make calls for status, description, details, priority, and taskId
+      expect(mockClientInstance._executeWithRateLimit).toHaveBeenCalledTimes(5);
     });
 
     it('should skip unmapped fields', async () => {
@@ -252,8 +254,8 @@ describe('MondaySyncEngine', () => {
 
       await syncEngine.updateItemFields('12345', taskWithSameDetails);
 
-      // Should make calls for status, description, and priority (not details)
-      expect(mockClientInstance._executeWithRateLimit).toHaveBeenCalledTimes(3);
+      // Should make calls for status, description, priority, and taskId (not details)
+      expect(mockClientInstance._executeWithRateLimit).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -314,15 +316,17 @@ describe('MondaySyncEngine', () => {
       status: 'pending'
     };
     const mockParentTask = {
+      id: '1',
       title: 'Parent Task',
-      description: 'Parent description'
+      description: 'Parent description',
+      mondayItemId: '11111'
     };
     const tasksPath = '/test/tasks.json';
     const subtaskId = '1.1';
 
     it('should create new subtask with formatted title', async () => {
       mockClientInstance._executeWithRateLimit
-        .mockResolvedValueOnce({ create_item: { id: '12345' } })
+        .mockResolvedValueOnce({ create_subitem: { id: '12345' } })
         .mockResolvedValue({});
 
       const result = await syncEngine.syncSubtask(mockSubtask, mockParentTask, tasksPath, subtaskId);
@@ -330,9 +334,9 @@ describe('MondaySyncEngine', () => {
       expect(result.success).toBe(true);
       expect(result.mondayItemId).toBe('12345');
       
-      // Check that the create call includes formatted title
       const createCall = mockClientInstance._executeWithRateLimit.mock.calls[0][0];
-      expect(createCall).toContain('[Parent Task] Test Subtask');
+      expect(createCall).toContain('create_subitem');
+      expect(createCall).toContain('Test Subtask');
       
       expect(mockUpdateSubtaskSyncStatus).toHaveBeenCalledWith(
         tasksPath, subtaskId, '12345', 'synced'
@@ -353,15 +357,18 @@ describe('MondaySyncEngine', () => {
     });
 
     it('should handle sync errors for subtasks', async () => {
-      const error = new Error('Subtask sync failed');
-      mockClientInstance._executeWithRateLimit.mockRejectedValueOnce(error);
-
-      const result = await syncEngine.syncSubtask(mockSubtask, mockParentTask, tasksPath, subtaskId);
+      const parentTaskWithoutMondayId = {
+        id: '1',
+        title: 'Parent Task',
+        description: 'Parent description'
+      };
+      
+      const result = await syncEngine.syncSubtask(mockSubtask, parentTaskWithoutMondayId, tasksPath, subtaskId);
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Subtask sync failed');
+      expect(result.error).toBe('Parent task (ID: 1) must be synced to Monday.com before its subtasks can be synced');
       expect(mockUpdateSubtaskSyncStatus).toHaveBeenCalledWith(
-        tasksPath, subtaskId, null, 'error', 'Subtask sync failed'
+        tasksPath, subtaskId, null, 'error', 'Parent task (ID: 1) must be synced to Monday.com before its subtasks can be synced'
       );
     });
   });

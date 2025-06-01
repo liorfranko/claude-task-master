@@ -92,7 +92,12 @@ const DEFAULT_CONFIG = {
 		columnMapping: {
 			status: 'status',
 			title: 'name',
-			description: 'notes'
+			description: 'description',
+			details: 'details',
+			taskId: 'task_id',
+			priority: 'priority',
+			testStrategy: 'test_strategy',
+			dependencies: 'dependencies'
 		},
 		syncSettings: {
 			autoSync: false

@@ -30,13 +30,17 @@
     "azureOpenaiBaseUrl": "https://your-endpoint.openai.azure.com/"
   },
   "mondayIntegration": {
-    "boardId": "9275265350",
+    "boardId": "9276172766",
     "columnMapping": {
-      "status": "color_mkrg4361",
+      "status": "status",
       "title": "name",
-      "description": "long_text_mkrgfn70",
-      "name": "name",
-      "notes": "long_text_mkrgfn70"
+      "description": "description",
+      "details": "task_details",
+      "taskId": "task_id_field",
+      "priority": "task_priority",
+      "testStrategy": "test_strategy",
+      "dependencies": "task_dependencies",
+      "notes": "task_details"
     },
     "syncSettings": {
       "autoSync": false

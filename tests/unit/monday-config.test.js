@@ -8,7 +8,8 @@ describe('Monday.com Configuration Manager', () => {
         columnMapping: {
           status: 'status',
           name: 'name',
-          notes: 'notes'
+          notes: 'notes',
+          details: 'details'
         },
         syncSettings: {
           autoSync: false
@@ -20,6 +21,7 @@ describe('Monday.com Configuration Manager', () => {
       expect(expectedDefaultConfig.columnMapping).toHaveProperty('status');
       expect(expectedDefaultConfig.columnMapping).toHaveProperty('name');
       expect(expectedDefaultConfig.columnMapping).toHaveProperty('notes');
+      expect(expectedDefaultConfig.columnMapping).toHaveProperty('details');
       expect(expectedDefaultConfig.syncSettings).toHaveProperty('autoSync');
       expect(expectedDefaultConfig.syncSettings.autoSync).toBe(false);
     });
@@ -33,7 +35,8 @@ describe('Monday.com Configuration Manager', () => {
           columnMapping: {
             status: 'Status Column',
             name: 'Task Name',
-            notes: 'Description'
+            notes: 'Description',
+            details: 'Details'
           }
         },
         { apiToken: 'test-token-123' }
@@ -47,7 +50,7 @@ describe('Monday.com Configuration Manager', () => {
 
     test('should validate expected configuration keys', () => {
       const requiredConfigKeys = ['boardId', 'columnMapping', 'syncSettings'];
-      const requiredColumnKeys = ['status', 'name', 'notes'];
+      const requiredColumnKeys = ['status', 'name', 'notes', 'details'];
       const requiredSyncKeys = ['autoSync'];
 
       // Verify we have the right structure expectations
@@ -58,6 +61,7 @@ describe('Monday.com Configuration Manager', () => {
       expect(requiredColumnKeys).toContain('status');
       expect(requiredColumnKeys).toContain('name');
       expect(requiredColumnKeys).toContain('notes');
+      expect(requiredColumnKeys).toContain('details');
       
       expect(requiredSyncKeys).toContain('autoSync');
     });
@@ -68,7 +72,8 @@ describe('Monday.com Configuration Manager', () => {
       const standardMappings = {
         status: 'status',
         name: 'name',
-        notes: 'notes'
+        notes: 'notes',
+        details: 'details'
       };
 
       Object.entries(standardMappings).forEach(([key, value]) => {
@@ -83,7 +88,8 @@ describe('Monday.com Configuration Manager', () => {
       const customMappings = {
         status: 'Status Column',
         name: 'Task Name',
-        notes: 'Description Field'
+        notes: 'Description Field',
+        details: 'Details Field'
       };
 
       Object.entries(customMappings).forEach(([key, value]) => {

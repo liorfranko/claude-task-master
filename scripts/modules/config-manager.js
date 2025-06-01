@@ -68,22 +68,15 @@ const DEFAULTS = {
 		columnMapping: {
 			status: 'status',
 			title: 'name',
-			description: 'notes'
+			description: 'description',
+			details: 'task_details',
+			taskId: 'task_id_field',
+			priority: 'task_priority',
+			testStrategy: 'test_strategy',
+			dependencies: 'task_dependencies'
 		},
 		syncSettings: {
 			autoSync: false		}
-	}
-};
-
-const DEFAULT_MONDAY_CONFIG = {
-	boardId: null,
-	columnMapping: {
-		status: 'status',
-		name: 'name',
-		notes: 'notes'
-	},
-	syncSettings: {
-		autoSync: false
 	}
 };
 
@@ -822,11 +815,10 @@ async function validateMondayConfigWithBoardInfo(explicitRoot = null, session = 
 	
 	// Validate column mapping
 	const columnMapping = getMondayColumnMapping(explicitRoot);
-	const requiredColumns = ['status', 'title', 'description'];
-	for (const column of requiredColumns) {
-		if (!columnMapping[column] || typeof columnMapping[column] !== 'string') {
-			errors.push(`Monday.com column mapping for '${column}' must be a string`);
-		}
+	
+	// Title is required since it's used for the Monday item name
+	if (!columnMapping.title || typeof columnMapping.title !== 'string') {
+		errors.push(`Monday.com column mapping for 'title' must be a string`);
 	}
 	
 	const result = {

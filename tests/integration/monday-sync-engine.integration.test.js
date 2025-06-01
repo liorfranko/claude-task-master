@@ -111,6 +111,7 @@ describe('MondaySyncEngine Integration Tests', () => {
 
     it('should create a new item on Monday board', async () => {
       const testTask = {
+        id: 100,
         title: `Test Task ${Date.now()}`,
         description: 'Created by integration test',
         status: 'pending',
@@ -130,6 +131,7 @@ describe('MondaySyncEngine Integration Tests', () => {
     it('should update an existing item on Monday board', async () => {
       // First create an item
       const testTask = {
+        id: 101,
         title: `Update Test Task ${Date.now()}`,
         description: 'To be updated by integration test',
         status: 'pending'
@@ -168,6 +170,7 @@ describe('MondaySyncEngine Integration Tests', () => {
     it('should sync task from tasks.json to Monday board', async () => {
       const result = await syncEngine.syncTask(
         {
+          id: 999,
           title: `Sync Test Task ${Date.now()}`,
           description: 'Task synced from tasks.json',
           status: 'in-progress',
