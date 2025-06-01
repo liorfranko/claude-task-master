@@ -441,7 +441,7 @@ The changes described in the prompt should be thoughtfully applied to make the t
 				success: true,
 				updatedTask: updatedTask,
 				telemetryData: aiServiceResponse?.telemetryData || null,
-				persistenceMode: persistenceManager.getCurrentMode()
+				persistenceMode: persistenceManager.getStatus().mode
 			};
 		} catch (serviceError) {
 			if (loadingIndicator)

@@ -507,6 +507,5 @@ export {
   mapTaskStatusToMonday,
   mapMondayStatusToTask,
   getGroupForStatus,
-  getPriorityForStatus,
-  TASK_STATUS_OPTIONS
+  getPriorityForStatus
 } from './monday-status-mapping.js'; 

@@ -393,8 +393,62 @@
       "dependencies": [
         4
       ],
-      "status": "pending",
-      "subtasks": []
+      "status": "in-progress",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Integrate Monday.com Board Relation Columns for Dependency Storage",
+          "description": "Refactor the dependency management functions to use Monday.com board relation (dependency) columns for storing and retrieving dependency relationships between tasks.",
+          "dependencies": [],
+          "details": "Update the data access layer to interact with Monday.com's dependency column API. Ensure that adding, removing, and querying dependencies now operate on the board relation column. Maintain support for the existing local persistence layer for backward compatibility by introducing an abstraction layer that can switch between local and Monday.com storage based on project configuration.",
+          "status": "done",
+          "testStrategy": "Test by adding and removing dependencies on a Monday.com board and verifying that the relationships are correctly reflected both in the UI and via API queries. Confirm that legacy projects using local persistence remain unaffected."
+        },
+        {
+          "id": 2,
+          "title": "Implement Dependency Addition and Removal Functions Using Monday.com API",
+          "description": "Modify the functions responsible for adding and removing dependencies to utilize the Monday.com API and board relation columns.",
+          "dependencies": [
+            1
+          ],
+          "details": "Update the logic for adding a dependency to create a relation in the Monday.com dependency column. Similarly, update removal logic to delete the relation. Ensure that these operations handle both single and batch updates efficiently. Provide fallbacks for local persistence when Monday.com is not enabled.\n<info added on 2025-06-01T12:56:45.355Z>\nProgress Update on Monday.com Dependency Integration\n\n- Analysis of the current codebase revealed that dependencies are currently stored as comma-separated text in Monday.com columns, which limits the ability to perform advanced dependency queries and impact analysis.\n- Identified the need to transition from text columns to board relation columns (Connect Boards Column) for storing dependencies, leveraging Monday.com's native relationship features for more robust linking and querying capabilities.\n- Next steps include enhancing the MondayApiClient to support board relation column operations, updating dependency addition and removal logic to utilize these columns, and implementing dependency impact analysis using Monday.com's graph queries.\n- The persistenceManager abstraction in dependency-manager.js will facilitate seamless integration with Monday.com, ensuring that dependency operations are consistent whether Monday.com is enabled or not.\n- Ready to proceed with implementing board relation column support for dependencies, which will enable more powerful and maintainable dependency management within Monday.com.\n</info added on 2025-06-01T12:56:45.355Z>",
+          "status": "done",
+          "testStrategy": "Write unit and integration tests to verify that dependencies can be added and removed via the Monday.com API, and that the board relation column updates as expected."
+        },
+        {
+          "id": 3,
+          "title": "Develop Dependency Validation and Circular Reference Prevention Utilities",
+          "description": "Create utility functions to validate dependency relationships and prevent the creation of circular dependencies using Monday.com data structures.",
+          "dependencies": [
+            2
+          ],
+          "details": "Implement validation logic that checks for the existence of tasks before creating dependencies and ensures that adding a new dependency does not introduce a cycle. Use graph traversal algorithms (e.g., DFS) on the dependency graph represented by the board relation column. Integrate these utilities into the add/remove dependency functions.\n<info added on 2025-06-01T13:02:50.215Z>\nBased on our analysis of the Monday.com API and existing codebase, we need to implement enhanced validation utilities that work with Monday.com's dependency structure while leveraging our existing validation foundation.\n\nThe Monday.com dependency column supports multiple dependency types (finish to start, start to start, finish to finish, start to finish) and flexibility settings (flexible, strict, no action)[2][5]. Our validation logic must account for these features while ensuring compatibility with our existing graph traversal algorithms.\n\nKey implementation requirements:\n1. Extend `isCircularDependency()` to handle Monday.com board relation column data structures\n2. Modify `validateTaskDependencies()` to validate against Monday.com API constraints\n3. Enhance `taskExists()` to verify task existence in Monday.com boards\n4. Implement validation for dependency types and flexibility settings\n5. Create fallback mechanisms when API validation fails\n6. Ensure validation works in both local and Monday.com integration modes\n\nNote that the Monday.com API currently has limitations regarding dependency type and lag settings[4], which our validation logic must account for. We'll need to implement proper error handling for these edge cases to maintain system stability.\n</info added on 2025-06-01T13:02:50.215Z>\n<info added on 2025-06-01T13:06:21.856Z>\nBased on our implementation of the enhanced dependency validation utilities, we've successfully integrated Monday.com's dependency features into our validation framework. The implementation includes:\n\n1. A new DependencyValidationUtils class that handles both local and Monday.com validation contexts, with specialized methods for:\n   - Task existence verification across both systems\n   - Circular dependency detection using DFS graph traversal on Monday.com board relations\n   - Comprehensive relationship validation supporting all Monday.com dependency types (finish to start, start to start, finish to finish, start to finish)\n   - Monday.com-specific constraint validation accounting for flexibility settings (flexible, strict, no action)\n\n2. Enhanced addDependency function with integrated validation that:\n   - Performs pre-validation checks before attempting to create dependencies\n   - Initializes Monday.com context with appropriate fallbacks\n   - Provides detailed error reporting through the UI\n   - Maintains backward compatibility with our existing validation framework\n\n3. API integration features including:\n   - Helper functions for Monday.com item existence validation\n   - ID mapping between our subtasks and Monday.com items\n   - Validation against known API limitations regarding dependency types and lag settings\n   - Graceful fallback mechanisms when API validation fails\n\n4. Comprehensive error handling with:\n   - Structured error responses detailing specific validation issues\n   - Visual error displays using our boxed message system\n   - Degradation paths when Monday.com integration is unavailable\n   - Detailed logging for troubleshooting\n\nAll validation utilities have been implemented and integrated with the add dependency functions. The next step is to integrate these utilities with the remove dependency functions and proceed with testing.\n</info added on 2025-06-01T13:06:21.856Z>\n<info added on 2025-06-01T13:08:20.711Z>\nThe validation utilities have now been integrated into the removeDependency function to ensure robust validation during dependency removal. This integration includes checks to confirm the existence of the dependency before removal, validation of Monday.com context and board relation consistency, and detailed error reporting for any removal failures. Backward compatibility with existing removal logic is maintained. With this, the DependencyValidationUtils are fully integrated across all dependency management functions, completing the validation framework for both addition and removal operations.\n</info added on 2025-06-01T13:08:20.711Z>\n<info added on 2025-06-01T13:09:47.870Z>\nThe dependency validation and circular reference prevention utilities have been successfully implemented and integrated with both the add and remove dependency functions. Our implementation includes:\n\n1. A comprehensive DependencyValidationUtils class with specialized methods for:\n   - Task existence verification across both local and Monday.com systems\n   - Circular dependency detection using DFS graph traversal on Monday.com board relations\n   - Relationship validation supporting all Monday.com dependency types\n   - Monday.com-specific constraint validation for flexibility settings\n\n2. Enhanced dependency management functions with:\n   - Pre-validation checks before dependency operations\n   - Monday.com context initialization with appropriate fallbacks\n   - Detailed error reporting through the UI\n   - Backward compatibility with existing validation framework\n\n3. Full Monday.com integration supporting:\n   - Board relation column operations\n   - Dependency type validation (finish-to-start, start-to-start, etc.)\n   - API constraint validation with handling for known limitations\n   - Graceful degradation when API validation fails\n\n4. Comprehensive error handling providing:\n   - Structured error responses with detailed issue breakdown\n   - Visual error displays using our boxed message system\n   - Detailed logging for troubleshooting\n\nAll validation utilities have been fully implemented and integrated with both the add and remove dependency functions, completing the validation framework as required.\n</info added on 2025-06-01T13:09:47.870Z>",
+          "status": "done",
+          "testStrategy": "Test by attempting to create valid and invalid (circular) dependencies and verifying that the system prevents cycles and invalid references."
+        },
+        {
+          "id": 4,
+          "title": "Update Dependency Visualization to Use Monday.com Data Structures",
+          "description": "Refactor the dependency visualization components to read from Monday.com board relation columns and accurately display task relationships.",
+          "dependencies": [
+            3
+          ],
+          "details": "Modify visualization logic to fetch dependency data from Monday.com via API calls. Ensure that the UI reflects real-time changes in dependencies and supports different dependency types (e.g., finish-to-start, start-to-start). Maintain compatibility with local data for legacy projects.",
+          "status": "pending",
+          "testStrategy": "Test by creating, modifying, and deleting dependencies and verifying that the visualization updates accordingly for both Monday.com and local data sources."
+        },
+        {
+          "id": 5,
+          "title": "Implement Dependency Impact Analysis and Efficient Querying",
+          "description": "Add support for analyzing the impact of task modifications or deletions on dependencies, and implement efficient querying using Monday.com API filters.",
+          "dependencies": [
+            4
+          ],
+          "details": "When a task is modified or deleted, analyze which dependent tasks are affected and update them as needed. Use Monday.com API filtering capabilities to efficiently query dependencies and their impact. Ensure that the analysis works seamlessly for both Monday.com and local persistence modes.",
+          "status": "pending",
+          "testStrategy": "Test by modifying and deleting tasks with dependencies and verifying that all affected tasks are correctly identified and updated. Measure query performance and correctness."
+        }
+      ]
     },
     {
       "id": 10,
@@ -625,6 +679,138 @@
         17
       ],
       "status": "pending",
+      "subtasks": []
+    },
+    {
+      "id": 26,
+      "title": "Test Monday.com Integration by Creating a Simple Test Task",
+      "description": "Verify the Monday.com integration by programmatically creating a simple test task on a Monday.com board using the implemented modules.",
+      "details": "Use the completed Monday.com API client and persistence modules to create a new test item on a designated Monday.com board. Select a board (preferably a dedicated test board) and use the persistence layer's task creation function to add a task with minimal required fields (e.g., Task Name, Status). Ensure the API call uses the correct authentication and handles errors gracefully. Log the response, including the new item's ID, and verify that the item appears on the board. Consider using environment variables for API credentials and board IDs. Reference the official Monday.com API documentation for mutation structure and required fields. Handle rate limits and transient errors with retries as needed. Clean up test data after verification if necessary.[1][2][5]",
+      "testStrategy": "1. Run the test script to create a new task on the Monday.com test board using the integration modules. 2. Confirm that the API response contains a valid item ID and no errors. 3. Manually verify in the Monday.com UI that the test task appears with the correct details. 4. Check logs for any error messages or failed requests. 5. Optionally, delete the test task after verification to keep the board clean. 6. Repeat the test with invalid data to ensure error handling works as expected.",
+      "status": "done",
+      "dependencies": [
+        1,
+        2,
+        4
+      ],
+      "priority": "medium",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Verify test task appears in Monday.com board",
+          "description": "Check that the created test task is visible in the Monday.com board UI",
+          "details": "",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 26
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "title": "Comprehensive Monday.com Integration Testing",
+      "description": "Perform a thorough end-to-end test of the Monday.com integration, covering all supported operations, error handling, and data synchronization scenarios.",
+      "details": "Design and execute a suite of integration tests that exercise all major Monday.com integration features, including board creation, item CRUD operations, column updates, and synchronization with the Task Master persistence layer. Ensure tests cover both successful and failure scenarios, including authentication errors, rate limiting, and invalid data handling. Use both API-level tools (e.g., Postman, custom scripts) and UI automation (e.g., Selenium) to simulate real-world workflows and verify seamless data flow between Task Master and Monday.com. Incorporate best practices such as queuing requests, respecting rate limits, and validating all API responses. Document all test cases, expected outcomes, and any issues encountered. Coordinate with the documentation and reporting teams to ensure test coverage aligns with integration requirements and user documentation.",
+      "testStrategy": "1. Set up a dedicated Monday.com test board and configure API credentials.\n2. Run automated API tests for all CRUD operations, verifying correct data creation, retrieval, update, and deletion.\n3. Simulate error conditions (e.g., invalid tokens, rate limit exceeded) and verify robust error handling and recovery.\n4. Use UI automation to trigger integration workflows and confirm correct updates in both Monday.com and Task Master.\n5. Validate data synchronization by making changes in both systems and ensuring consistency.\n6. Review logs and API responses for anomalies or failures.\n7. Document results and confirm all issues are addressed before marking the integration as production-ready.",
+      "status": "pending",
+      "dependencies": [
+        1,
+        2,
+        4,
+        26
+      ],
+      "priority": "medium",
+      "subtasks": []
+    },
+    {
+      "id": 28,
+      "title": "Test Monday Integration",
+      "description": "Conduct a comprehensive test of the Monday.com integration to ensure all implemented modules interact correctly and data flows seamlessly between the application and Monday.com.",
+      "details": "Perform integration testing by exercising all major workflows that utilize the Monday.com API client, board manager, and persistence modules. This includes creating, updating, retrieving, and deleting tasks on Monday.com boards, verifying schema compliance, and ensuring error handling works as expected. Simulate real-world usage scenarios, such as concurrent updates, invalid data submissions, and network interruptions, to validate robustness. Use both API-level tools (e.g., Postman) and UI automation (e.g., Selenium) to test end-to-end flows, including authentication, data synchronization, and workflow triggers. Document all test cases, expected outcomes, and any issues encountered. Follow Monday.com integration best practices, such as queuing API requests and handling rate limits gracefully, to ensure stability and compliance with platform guidelines.",
+      "testStrategy": "1. Prepare a dedicated Monday.com test board with the required schema. 2. Use API testing tools to create, update, and delete tasks via the integration, verifying responses and board state after each operation. 3. Employ UI automation to simulate user interactions and workflow triggers within Monday.com, ensuring the integration responds correctly. 4. Test error scenarios, such as invalid data and API rate limits, and confirm the integration handles them gracefully. 5. Review logs and Monday.com board state to ensure all operations are reflected accurately. 6. Document results and confirm all test cases pass without regressions.",
+      "status": "pending",
+      "dependencies": [
+        1,
+        2,
+        4,
+        26
+      ],
+      "priority": "medium",
+      "subtasks": []
+    },
+    {
+      "id": 29,
+      "title": "Validate Monday Integration End-to-End",
+      "description": "Perform a thorough end-to-end validation of the Monday.com integration, ensuring all modules interact correctly and data flows seamlessly between the application and Monday.com.",
+      "details": "Execute comprehensive integration tests covering all major workflows that utilize the Monday.com API client, board manager, and persistence modules. This includes creating, updating, retrieving, and deleting tasks on Monday.com boards, verifying schema compliance, and ensuring robust error handling. Simulate real-world scenarios such as concurrent updates, invalid data submissions, and network failures. Use both API-level tools (e.g., Postman) and UI automation (e.g., Selenium) to validate data synchronization, trigger workflows, and confirm that updates in the application are accurately reflected in Monday.com and vice versa. Document pre-conditions, post-conditions, and test steps using a structured test case template to ensure repeatability and clarity. Collaborate with developers and stakeholders to review test coverage and refine cases as needed for continuous improvement.",
+      "testStrategy": "1. Prepare a dedicated Monday.com test board with the required schema.\n2. Use API testing tools to simulate all CRUD operations and validate API responses for correctness and error handling.\n3. Employ UI automation to simulate user workflows, verifying that actions in the application trigger the expected changes in Monday.com.\n4. Test edge cases such as invalid data, API failures, and concurrent updates to ensure graceful error handling and data consistency.\n5. Review logs and Monday.com board state after each test to confirm expected outcomes.\n6. Document all test results, discrepancies, and issues for follow-up.",
+      "status": "pending",
+      "dependencies": [
+        1,
+        2,
+        4,
+        26
+      ],
+      "priority": "medium",
+      "subtasks": []
+    },
+    {
+      "id": 30,
+      "title": "Automated Monday Integration Test Suite",
+      "description": "Create an automated test suite that continuously validates the Monday.com integration functionality through scheduled test runs and comprehensive coverage reporting.",
+      "details": "Develop a comprehensive automated testing framework specifically for the Monday.com integration that goes beyond manual testing. Create test scripts that can be run on-demand or scheduled to validate integration health. The suite should include:\n\n1. **Test Runner Framework**: Build a test orchestrator that manages test execution, reporting, and cleanup. Use a testing framework like Jest or Mocha to structure tests with proper setup/teardown.\n\n2. **Test Categories**:\n   - Unit tests for individual API client methods\n   - Integration tests for board manager operations\n   - End-to-end workflow tests (create board → add tasks → update → delete)\n   - Error handling and edge case validation\n   - Performance and rate limiting tests\n\n3. **Test Data Management**: Create utilities for generating test data, managing test boards, and cleaning up after test runs. Implement test isolation to prevent interference between test cases.\n\n4. **Automated Validation**: Include assertions for data integrity, schema compliance, API response validation, and error handling verification. Test both success and failure scenarios.\n\n5. **Reporting and Monitoring**: Generate detailed test reports with coverage metrics, performance benchmarks, and failure analysis. Include logging for debugging failed tests.\n\n6. **CI/CD Integration**: Structure tests to be easily integrated into continuous integration pipelines with proper exit codes and machine-readable output formats.\n\nThe test suite should be located in a dedicated `tests/monday-integration/` directory with clear organization by test type and functionality area.",
+      "testStrategy": "Verify the automated test suite by: 1) Running the complete test suite and confirming all tests pass with proper coverage reporting, 2) Intentionally breaking integration components to ensure tests detect failures correctly, 3) Validating test isolation by running tests multiple times without interference, 4) Checking that test cleanup properly removes all test data from Monday.com, 5) Confirming test reports provide actionable information for debugging failures, 6) Verifying the test suite can be executed in different environments (local, CI/CD) with consistent results, and 7) Testing the suite's ability to handle Monday.com API rate limits and temporary service issues gracefully.",
+      "status": "pending",
+      "dependencies": [
+        1,
+        2,
+        4,
+        26,
+        28
+      ],
+      "priority": "medium",
+      "subtasks": []
+    },
+    {
+      "id": 31,
+      "title": "Test Monday Sync After Fix",
+      "description": "Conduct targeted testing of the Monday.com integration to verify that recent fixes have resolved synchronization issues and data flows correctly between the application and Monday.com.",
+      "details": "Execute focused testing on the Monday.com integration following recent bug fixes or improvements. This involves running specific test scenarios that previously failed or exhibited issues, particularly around data synchronization, error handling, and API response processing. Test all CRUD operations (create, read, update, delete) on Monday.com boards to ensure they work reliably. Pay special attention to edge cases that may have been problematic before the fix, such as handling of special characters in task descriptions, proper status mapping, dependency relationships, and concurrent operations. Verify that the Monday API client properly handles rate limiting, authentication refresh, and network timeouts. Test both successful operations and error conditions to ensure graceful degradation. Document any remaining issues and verify that the fix addresses the root cause rather than just symptoms. Include testing of the board manager's schema validation and the persistence layer's data transformation to ensure end-to-end functionality works as expected.",
+      "testStrategy": "1. Review the specific issues that were fixed and create targeted test cases for those scenarios. 2. Execute the automated test suite from Task 30 to establish baseline functionality. 3. Perform manual testing of previously problematic operations, documenting before/after behavior. 4. Test edge cases including: invalid data inputs, network interruptions, concurrent operations, and rate limit scenarios. 5. Verify data integrity by comparing tasks created/updated in the application with their representation on Monday.com boards. 6. Run stress tests with multiple rapid operations to ensure stability under load. 7. Validate error handling by intentionally triggering error conditions and confirming appropriate responses. 8. Document test results with specific metrics on success rates, response times, and error frequencies compared to pre-fix performance.",
+      "status": "pending",
+      "dependencies": [
+        28,
+        29,
+        30
+      ],
+      "priority": "high",
+      "subtasks": []
+    },
+    {
+      "id": 32,
+      "title": "Verify Monday Sync Stability and Performance",
+      "description": "Conduct comprehensive verification that the Monday.com synchronization is functioning reliably and efficiently after recent fixes and improvements.",
+      "details": "Execute a thorough validation of the Monday.com synchronization functionality to confirm it is working properly and consistently. This involves running extended test scenarios that stress-test the sync mechanisms, including bulk operations, concurrent access patterns, and edge cases that could cause synchronization failures. Test data consistency by creating, updating, and deleting multiple tasks in rapid succession, then verifying that all changes are properly reflected on Monday.com boards. Monitor API response times and error rates to ensure performance meets acceptable thresholds. Validate that the sync handles network interruptions gracefully with proper retry mechanisms. Test schema validation during sync operations to ensure data integrity is maintained. Run automated sync tests for at least 30 minutes to identify any intermittent issues or memory leaks. Document any performance bottlenecks or areas for optimization. Verify that error logging provides sufficient detail for troubleshooting sync issues in production environments.",
+      "testStrategy": "Execute a multi-phase testing approach: 1) Run the automated test suite from Task 30 to establish baseline functionality, 2) Perform manual stress testing with 50+ concurrent task operations to verify sync stability under load, 3) Test network resilience by simulating connection drops during sync operations, 4) Validate data consistency by comparing local task state with Monday.com board data after various operations, 5) Monitor system resources (memory, CPU) during extended sync sessions, 6) Test error recovery by intentionally triggering API rate limits and verifying graceful handling, 7) Verify sync performance meets SLA requirements (< 2 seconds for single task operations, < 30 seconds for bulk operations), 8) Document all test results with timestamps, error logs, and performance metrics for future reference.",
+      "status": "pending",
+      "dependencies": [
+        31
+      ],
+      "priority": "high",
+      "subtasks": []
+    },
+    {
+      "id": 33,
+      "title": "Test Environment Variable Loading Explicitly",
+      "description": "Conduct comprehensive testing to verify that environment variables are loaded correctly and explicitly across all application modules, particularly for Monday.com integration configuration.",
+      "details": "Create thorough tests to validate that environment variables are being loaded properly and explicitly throughout the application. This involves testing different environment loading scenarios including:\n\n1. **Environment Variable Detection**: Test that all required environment variables (MONDAY_API_TOKEN, MONDAY_BOARD_ID, etc.) are properly detected and loaded at application startup. Create test cases for missing variables, invalid values, and proper fallback mechanisms.\n\n2. **Explicit Loading Verification**: Implement tests that explicitly verify environment variable loading by temporarily modifying or removing environment files (.env, .env.local, .env.test) and ensuring the application handles these scenarios gracefully. Test both dotenv loading and system environment variable precedence.\n\n3. **Configuration Module Testing**: If a configuration module exists, test that it properly loads and validates environment variables. Verify that configuration values are accessible throughout the application and that sensitive values are properly handled.\n\n4. **Monday.com Integration Environment Testing**: Specifically test that Monday.com API credentials and configuration are loaded correctly from environment variables. Verify that the API client can authenticate using environment-loaded credentials.\n\n5. **Cross-Environment Testing**: Test environment variable loading across different environments (development, testing, production) to ensure consistency and proper isolation.\n\n6. **Error Handling**: Test scenarios where environment variables are malformed, missing, or contain invalid values, ensuring the application provides clear error messages and fails gracefully.\n\nInclude tests for environment variable validation, type conversion (strings to numbers/booleans), and security considerations like masking sensitive values in logs.",
+      "testStrategy": "1. Create unit tests that mock different environment variable scenarios and verify proper loading behavior. 2. Implement integration tests that start the application with various environment configurations and validate functionality. 3. Test environment variable precedence by setting values in multiple locations (.env files, system environment, etc.) and verifying correct priority. 4. Validate that Monday.com integration works correctly with environment-loaded credentials by performing actual API calls in a test environment. 5. Test error scenarios by temporarily removing or corrupting environment files and verifying appropriate error handling. 6. Use environment variable validation tools or custom validators to ensure all required variables are present and properly formatted. 7. Verify that sensitive environment variables are not exposed in logs or error messages during testing.",
+      "status": "pending",
+      "dependencies": [
+        1,
+        32
+      ],
+      "priority": "medium",
       "subtasks": []
     }
   ]

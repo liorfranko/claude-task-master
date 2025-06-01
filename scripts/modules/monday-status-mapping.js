@@ -465,12 +465,3 @@ export function getPriorityForStatus(taskStatus) {
 export function getMappingTelemetry() {
   return statusMappingManager.getTelemetry();
 }
-
-// Export all constants for external use
-export {
-  TASK_STATUS_OPTIONS,
-  DEFAULT_STATUS_MAPPINGS,
-  STATUS_PRIORITY_MAPPING,
-  GROUP_MAPPINGS,
-  TRANSITION_RULES
-}; 

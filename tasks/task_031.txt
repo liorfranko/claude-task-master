@@ -1,0 +1,11 @@
+# Task ID: 31
+# Title: Test Monday Sync After Fix
+# Status: pending
+# Dependencies: 28, 29, 30
+# Priority: high
+# Description: Conduct targeted testing of the Monday.com integration to verify that recent fixes have resolved synchronization issues and data flows correctly between the application and Monday.com.
+# Details:
+Execute focused testing on the Monday.com integration following recent bug fixes or improvements. This involves running specific test scenarios that previously failed or exhibited issues, particularly around data synchronization, error handling, and API response processing. Test all CRUD operations (create, read, update, delete) on Monday.com boards to ensure they work reliably. Pay special attention to edge cases that may have been problematic before the fix, such as handling of special characters in task descriptions, proper status mapping, dependency relationships, and concurrent operations. Verify that the Monday API client properly handles rate limiting, authentication refresh, and network timeouts. Test both successful operations and error conditions to ensure graceful degradation. Document any remaining issues and verify that the fix addresses the root cause rather than just symptoms. Include testing of the board manager's schema validation and the persistence layer's data transformation to ensure end-to-end functionality works as expected.
+
+# Test Strategy:
+1. Review the specific issues that were fixed and create targeted test cases for those scenarios. 2. Execute the automated test suite from Task 30 to establish baseline functionality. 3. Perform manual testing of previously problematic operations, documenting before/after behavior. 4. Test edge cases including: invalid data inputs, network interruptions, concurrent operations, and rate limit scenarios. 5. Verify data integrity by comparing tasks created/updated in the application with their representation on Monday.com boards. 6. Run stress tests with multiple rapid operations to ensure stability under load. 7. Validate error handling by intentionally triggering error conditions and confirming appropriate responses. 8. Document test results with specific metrics on success rates, response times, and error frequencies compared to pre-fix performance.

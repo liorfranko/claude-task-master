@@ -88,7 +88,7 @@ async function addTask(
 	const effectivePriority = priority || getDefaultPriority(projectRoot);
 
 	logFn.info(
-		`Adding new task with prompt: "${prompt}", Priority: ${effectivePriority}, Dependencies: ${dependencies.join(', ') || 'None'}, Research: ${useResearch}, ProjectRoot: ${projectRoot}, Persistence: ${persistenceManager.getCurrentMode()}`
+		`Adding new task with prompt: "${prompt}", Priority: ${effectivePriority}, Dependencies: ${dependencies.join(', ') || 'None'}, Research: ${useResearch}, ProjectRoot: ${projectRoot}, Persistence: ${persistenceManager.getStatus().mode}`
 	);
 
 	let loadingIndicator = null;

@@ -200,7 +200,7 @@ async function removeTask(tasksPath, taskIds, options = {}) {
 			message: finalMessage || 'No tasks were removed.',
 			error: finalError || null,
 			removedTasks: results.removedTasks,
-			persistenceMode: persistenceManager.getCurrentMode()
+			persistenceMode: persistenceManager.getStatus().mode
 		};
 	} catch (error) {
 		// Catch errors from reading file or other initial setup

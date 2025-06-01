@@ -580,8 +580,8 @@ export class MondayApiClient {
   }
 
   /**
-   * Get current user information
-   * @returns {Object} User data
+   * Get current user info
+   * @returns {Object} Current user information
    */
   async getCurrentUser() {
     this._validateInitialized();
@@ -594,21 +594,486 @@ export class MondayApiClient {
               id
               name
               email
+              is_admin
+              is_verified
               account {
                 id
                 name
+                plan {
+                  max_users
+                  period
+                  tier
+                }
               }
             }
           }
         `;
         
         const result = await this._graphqlRequest(query);
-        return this._standardizeResponse(result.data.me, 'current_user');
+        return this._standardizeResponse(result.data.me, 'get_current_user');
       });
     } catch (error) {
-      log('error', 'Failed to get current user:', error.message);
-      throw new Error(`User retrieval failed: ${error.message}`);
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'getCurrentUser',
+        resourceType: 'user'
+      });
+      
+      log('error', 'Failed to get current user info:', errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
     }
+  }
+
+  /**
+   * Add a board relation (dependency) between items using Connect Boards column
+   * @param {number} itemId - Source item ID
+   * @param {string} relationColumnId - Connect Boards column ID
+   * @param {number|Array} targetItemIds - Target item ID(s) to connect
+   * @returns {Object} Relation creation result
+   */
+  async addBoardRelation(itemId, relationColumnId, targetItemIds) {
+    this._validateInitialized();
+    
+    // Validate item ID
+    const itemIdValidation = mondayValidation.validateId(itemId, 'item');
+    if (!itemIdValidation.valid) {
+      throw new Error(itemIdValidation.message);
+    }
+    
+    // Validate relation column ID
+    if (!relationColumnId || typeof relationColumnId !== 'string') {
+      throw new Error('Relation column ID must be a non-empty string');
+    }
+    
+    // Normalize target item IDs to array
+    const targetIds = Array.isArray(targetItemIds) ? targetItemIds : [targetItemIds];
+    
+    // Validate each target ID
+    const validatedTargetIds = [];
+    for (const targetId of targetIds) {
+      const targetValidation = mondayValidation.validateId(targetId, 'item');
+      if (!targetValidation.valid) {
+        throw new Error(`Invalid target item ID: ${targetValidation.message}`);
+      }
+      validatedTargetIds.push(targetValidation.sanitized);
+    }
+    
+    try {
+      return await this._executeWithRetry(async () => {
+        // Build the JSON value for Connect Boards column
+        const connectionValue = {
+          item_ids: validatedTargetIds
+        };
+        
+        const mutation = `
+          mutation {
+            change_column_value(
+              item_id: ${itemIdValidation.sanitized}
+              column_id: "${relationColumnId}"
+              value: "${JSON.stringify(connectionValue).replace(/"/g, '\\"')}"
+            ) {
+              id
+              name
+              column_values(ids: ["${relationColumnId}"]) {
+                id
+                value
+                text
+              }
+            }
+          }
+        `;
+        
+        const result = await this._graphqlRequest(mutation);
+        return this._standardizeResponse(result.data.change_column_value, 'add_board_relation');
+      });
+    } catch (error) {
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'addBoardRelation',
+        itemId: itemIdValidation.sanitized,
+        targetIds: validatedTargetIds,
+        resourceType: 'item_relation'
+      });
+      
+      log('error', `Failed to add board relation for item ${itemIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
+    }
+  }
+
+  /**
+   * Remove a board relation (dependency) between items using Connect Boards column
+   * @param {number} itemId - Source item ID
+   * @param {string} relationColumnId - Connect Boards column ID
+   * @param {number|Array} targetItemIds - Target item ID(s) to disconnect
+   * @returns {Object} Relation removal result
+   */
+  async removeBoardRelation(itemId, relationColumnId, targetItemIds) {
+    this._validateInitialized();
+    
+    // Validate item ID
+    const itemIdValidation = mondayValidation.validateId(itemId, 'item');
+    if (!itemIdValidation.valid) {
+      throw new Error(itemIdValidation.message);
+    }
+    
+    // Validate relation column ID
+    if (!relationColumnId || typeof relationColumnId !== 'string') {
+      throw new Error('Relation column ID must be a non-empty string');
+    }
+    
+    // Normalize target item IDs to array
+    const targetIds = Array.isArray(targetItemIds) ? targetItemIds : [targetItemIds];
+    
+    // Validate each target ID
+    const validatedTargetIds = [];
+    for (const targetId of targetIds) {
+      const targetValidation = mondayValidation.validateId(targetId, 'item');
+      if (!targetValidation.valid) {
+        throw new Error(`Invalid target item ID: ${targetValidation.message}`);
+      }
+      validatedTargetIds.push(targetValidation.sanitized);
+    }
+    
+    try {
+      return await this._executeWithRetry(async () => {
+        // First, get the current relations to determine what to keep
+        const currentQuery = `
+          query {
+            items(ids: [${itemIdValidation.sanitized}]) {
+              column_values(ids: ["${relationColumnId}"]) {
+                id
+                value
+                text
+              }
+            }
+          }
+        `;
+        
+        const currentResult = await this._graphqlRequest(currentQuery);
+        const currentColumn = currentResult.data.items[0]?.column_values[0];
+        
+        let updatedItemIds = [];
+        
+        if (currentColumn && currentColumn.value) {
+          try {
+            const currentValue = JSON.parse(currentColumn.value);
+            const currentItemIds = currentValue.item_ids || [];
+            
+            // Filter out the target IDs to remove
+            updatedItemIds = currentItemIds.filter(id => 
+              !validatedTargetIds.includes(parseInt(id, 10))
+            );
+          } catch (parseError) {
+            log('warn', 'Failed to parse current relation value, setting empty relations');
+            updatedItemIds = [];
+          }
+        }
+        
+        // Update the column with the filtered relations
+        const connectionValue = {
+          item_ids: updatedItemIds
+        };
+        
+        const mutation = `
+          mutation {
+            change_column_value(
+              item_id: ${itemIdValidation.sanitized}
+              column_id: "${relationColumnId}"
+              value: "${JSON.stringify(connectionValue).replace(/"/g, '\\"')}"
+            ) {
+              id
+              name
+              column_values(ids: ["${relationColumnId}"]) {
+                id
+                value
+                text
+              }
+            }
+          }
+        `;
+        
+        const result = await this._graphqlRequest(mutation);
+        return this._standardizeResponse(result.data.change_column_value, 'remove_board_relation');
+      });
+    } catch (error) {
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'removeBoardRelation',
+        itemId: itemIdValidation.sanitized,
+        targetIds: validatedTargetIds,
+        resourceType: 'item_relation'
+      });
+      
+      log('error', `Failed to remove board relation for item ${itemIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
+    }
+  }
+
+  /**
+   * Get board relations (dependencies) for an item using Connect Boards column
+   * @param {number} itemId - Item ID to get relations for
+   * @param {string} relationColumnId - Connect Boards column ID
+   * @returns {Object} Item relations data
+   */
+  async getBoardRelations(itemId, relationColumnId) {
+    this._validateInitialized();
+    
+    // Validate item ID
+    const itemIdValidation = mondayValidation.validateId(itemId, 'item');
+    if (!itemIdValidation.valid) {
+      throw new Error(itemIdValidation.message);
+    }
+    
+    // Validate relation column ID
+    if (!relationColumnId || typeof relationColumnId !== 'string') {
+      throw new Error('Relation column ID must be a non-empty string');
+    }
+    
+    try {
+      return await this._executeWithRetry(async () => {
+        const query = `
+          query {
+            items(ids: [${itemIdValidation.sanitized}]) {
+              id
+              name
+              column_values(ids: ["${relationColumnId}"]) {
+                id
+                value
+                text
+                ... on ConnectBoardsValue {
+                  connected_board_items {
+                    id
+                    name
+                    state
+                    board {
+                      id
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+        
+        const result = await this._graphqlRequest(query);
+        const item = result.data.items[0];
+        
+        if (!item) {
+          throw new Error(`Item ${itemIdValidation.sanitized} not found`);
+        }
+        
+        const relationColumn = item.column_values[0];
+        const relations = {
+          itemId: itemIdValidation.sanitized,
+          itemName: item.name,
+          columnId: relationColumnId,
+          connectedItems: [],
+          connectedItemIds: []
+        };
+        
+        if (relationColumn && relationColumn.connected_board_items) {
+          relations.connectedItems = relationColumn.connected_board_items;
+          relations.connectedItemIds = relationColumn.connected_board_items.map(item => parseInt(item.id, 10));
+        } else if (relationColumn && relationColumn.value) {
+          // Fallback: parse JSON value if connected_board_items is not available
+          try {
+            const parsedValue = JSON.parse(relationColumn.value);
+            relations.connectedItemIds = parsedValue.item_ids || [];
+          } catch (parseError) {
+            log('warn', 'Failed to parse relation column value');
+          }
+        }
+        
+        return this._standardizeResponse(relations, 'get_board_relations');
+      });
+    } catch (error) {
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'getBoardRelations',
+        itemId: itemIdValidation.sanitized,
+        resourceType: 'item_relation'
+      });
+      
+      log('error', `Failed to get board relations for item ${itemIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
+    }
+  }
+
+  /**
+   * Get dependency impact analysis - find all items that depend on a given item
+   * @param {number} itemId - Item ID to analyze impact for
+   * @param {number} boardId - Board ID to search within
+   * @param {string} relationColumnId - Connect Boards column ID
+   * @returns {Object} Impact analysis result
+   */
+  async getDependencyImpactAnalysis(itemId, boardId, relationColumnId) {
+    this._validateInitialized();
+    
+    // Validate item ID
+    const itemIdValidation = mondayValidation.validateId(itemId, 'item');
+    if (!itemIdValidation.valid) {
+      throw new Error(itemIdValidation.message);
+    }
+    
+    // Validate board ID
+    const boardIdValidation = mondayValidation.validateId(boardId, 'board');
+    if (!boardIdValidation.valid) {
+      throw new Error(boardIdValidation.message);
+    }
+    
+    // Validate relation column ID
+    if (!relationColumnId || typeof relationColumnId !== 'string') {
+      throw new Error('Relation column ID must be a non-empty string');
+    }
+    
+    try {
+      return await this._executeWithRetry(async () => {
+        const query = `
+          query {
+            boards(ids: [${boardIdValidation.sanitized}]) {
+              items_page(limit: 500) {
+                items {
+                  id
+                  name
+                  state
+                  column_values(ids: ["${relationColumnId}"]) {
+                    id
+                    value
+                    text
+                    ... on ConnectBoardsValue {
+                      connected_board_items {
+                        id
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `;
+        
+        const result = await this._graphqlRequest(query);
+        const items = result.data.boards[0]?.items_page?.items || [];
+        
+        const dependentItems = [];
+        const targetItemId = itemIdValidation.sanitized;
+        
+        // Find all items that have the target item as a dependency
+        for (const item of items) {
+          const relationColumn = item.column_values[0];
+          
+          if (relationColumn) {
+            let connectedItemIds = [];
+            
+            // Check connected_board_items first
+            if (relationColumn.connected_board_items) {
+              connectedItemIds = relationColumn.connected_board_items.map(connectedItem => 
+                parseInt(connectedItem.id, 10)
+              );
+            } else if (relationColumn.value) {
+              // Fallback: parse JSON value
+              try {
+                const parsedValue = JSON.parse(relationColumn.value);
+                connectedItemIds = parsedValue.item_ids || [];
+              } catch (parseError) {
+                // Skip items with unparseable relation values
+                continue;
+              }
+            }
+            
+            // Check if this item depends on the target item
+            if (connectedItemIds.includes(targetItemId)) {
+              dependentItems.push({
+                id: parseInt(item.id, 10),
+                name: item.name,
+                state: item.state,
+                dependsOn: connectedItemIds
+              });
+            }
+          }
+        }
+        
+        const impactAnalysis = {
+          targetItemId: targetItemId,
+          boardId: boardIdValidation.sanitized,
+          dependentItems,
+          totalImpactedItems: dependentItems.length,
+          impactLevels: this._calculateDependencyImpactLevels(dependentItems, items, relationColumnId)
+        };
+        
+        return this._standardizeResponse(impactAnalysis, 'dependency_impact_analysis');
+      });
+    } catch (error) {
+      const errorResponse = await mondayErrorHandler.handleError(error, { 
+        operation: 'getDependencyImpactAnalysis',
+        itemId: itemIdValidation.sanitized,
+        boardId: boardIdValidation.sanitized,
+        resourceType: 'dependency_analysis'
+      });
+      
+      log('error', `Failed to analyze dependency impact for item ${itemIdValidation.sanitized}:`, errorResponse.error.message);
+      throw new Error(errorResponse.error.message);
+    }
+  }
+
+  /**
+   * Calculate dependency impact levels (helper method)
+   * @private
+   * @param {Array} dependentItems - Items that depend on the target
+   * @param {Array} allItems - All items in the board
+   * @param {string} relationColumnId - Connect Boards column ID
+   * @returns {Object} Impact levels analysis
+   */
+  _calculateDependencyImpactLevels(dependentItems, allItems, relationColumnId) {
+    const impactLevels = {
+      direct: [], // Items that directly depend on the target
+      indirect: [], // Items that depend on items that depend on the target
+      chains: [] // Dependency chains
+    };
+    
+    // Direct dependencies are the items we already found
+    impactLevels.direct = dependentItems.map(item => ({
+      id: item.id,
+      name: item.name,
+      state: item.state
+    }));
+    
+    // Find indirect dependencies by checking what depends on the direct dependencies
+    const directItemIds = dependentItems.map(item => item.id);
+    
+    for (const item of allItems) {
+      const relationColumn = item.column_values?.[0];
+      
+      if (relationColumn) {
+        let connectedItemIds = [];
+        
+        // Extract connected item IDs
+        if (relationColumn.connected_board_items) {
+          connectedItemIds = relationColumn.connected_board_items.map(connectedItem => 
+            parseInt(connectedItem.id, 10)
+          );
+        } else if (relationColumn.value) {
+          try {
+            const parsedValue = JSON.parse(relationColumn.value);
+            connectedItemIds = parsedValue.item_ids || [];
+          } catch (parseError) {
+            continue;
+          }
+        }
+        
+        // Check if this item depends on any of the direct dependencies
+        const dependsOnDirectItems = connectedItemIds.filter(id => directItemIds.includes(id));
+        
+        if (dependsOnDirectItems.length > 0 && !directItemIds.includes(parseInt(item.id, 10))) {
+          impactLevels.indirect.push({
+            id: parseInt(item.id, 10),
+            name: item.name,
+            state: item.state,
+            dependsOnDirect: dependsOnDirectItems
+          });
+        }
+      }
+    }
+    
+    return impactLevels;
   }
 
   // Private helper methods

@@ -1,6 +1,6 @@
 # Task ID: 9
 # Title: Update Dependency Management Functions
-# Status: pending
+# Status: in-progress
 # Dependencies: 4
 # Priority: medium
 # Description: Modify dependency tracking functions to use Monday.com board relation columns.
@@ -9,3 +9,119 @@ Update all dependency management functions to use Monday.com board relation colu
 
 # Test Strategy:
 Test adding, removing, and checking dependencies with various task structures. Verify circular dependency prevention works correctly. Test dependency visualization with Monday.com data. Test dependency impact analysis for task modifications and deletions. Verify backward compatibility with local persistence mode. Create integration tests with a test Monday.com account to verify actual dependency management behavior.
+
+# Subtasks:
+## 1. Integrate Monday.com Board Relation Columns for Dependency Storage [done]
+### Dependencies: None
+### Description: Refactor the dependency management functions to use Monday.com board relation (dependency) columns for storing and retrieving dependency relationships between tasks.
+### Details:
+Update the data access layer to interact with Monday.com's dependency column API. Ensure that adding, removing, and querying dependencies now operate on the board relation column. Maintain support for the existing local persistence layer for backward compatibility by introducing an abstraction layer that can switch between local and Monday.com storage based on project configuration.
+
+## 2. Implement Dependency Addition and Removal Functions Using Monday.com API [done]
+### Dependencies: 9.1
+### Description: Modify the functions responsible for adding and removing dependencies to utilize the Monday.com API and board relation columns.
+### Details:
+Update the logic for adding a dependency to create a relation in the Monday.com dependency column. Similarly, update removal logic to delete the relation. Ensure that these operations handle both single and batch updates efficiently. Provide fallbacks for local persistence when Monday.com is not enabled.
+<info added on 2025-06-01T12:56:45.355Z>
+Progress Update on Monday.com Dependency Integration
+
+- Analysis of the current codebase revealed that dependencies are currently stored as comma-separated text in Monday.com columns, which limits the ability to perform advanced dependency queries and impact analysis.
+- Identified the need to transition from text columns to board relation columns (Connect Boards Column) for storing dependencies, leveraging Monday.com's native relationship features for more robust linking and querying capabilities.
+- Next steps include enhancing the MondayApiClient to support board relation column operations, updating dependency addition and removal logic to utilize these columns, and implementing dependency impact analysis using Monday.com's graph queries.
+- The persistenceManager abstraction in dependency-manager.js will facilitate seamless integration with Monday.com, ensuring that dependency operations are consistent whether Monday.com is enabled or not.
+- Ready to proceed with implementing board relation column support for dependencies, which will enable more powerful and maintainable dependency management within Monday.com.
+</info added on 2025-06-01T12:56:45.355Z>
+
+## 3. Develop Dependency Validation and Circular Reference Prevention Utilities [done]
+### Dependencies: 9.2
+### Description: Create utility functions to validate dependency relationships and prevent the creation of circular dependencies using Monday.com data structures.
+### Details:
+Implement validation logic that checks for the existence of tasks before creating dependencies and ensures that adding a new dependency does not introduce a cycle. Use graph traversal algorithms (e.g., DFS) on the dependency graph represented by the board relation column. Integrate these utilities into the add/remove dependency functions.
+<info added on 2025-06-01T13:02:50.215Z>
+Based on our analysis of the Monday.com API and existing codebase, we need to implement enhanced validation utilities that work with Monday.com's dependency structure while leveraging our existing validation foundation.
+
+The Monday.com dependency column supports multiple dependency types (finish to start, start to start, finish to finish, start to finish) and flexibility settings (flexible, strict, no action)[2][5]. Our validation logic must account for these features while ensuring compatibility with our existing graph traversal algorithms.
+
+Key implementation requirements:
+1. Extend `isCircularDependency()` to handle Monday.com board relation column data structures
+2. Modify `validateTaskDependencies()` to validate against Monday.com API constraints
+3. Enhance `taskExists()` to verify task existence in Monday.com boards
+4. Implement validation for dependency types and flexibility settings
+5. Create fallback mechanisms when API validation fails
+6. Ensure validation works in both local and Monday.com integration modes
+
+Note that the Monday.com API currently has limitations regarding dependency type and lag settings[4], which our validation logic must account for. We'll need to implement proper error handling for these edge cases to maintain system stability.
+</info added on 2025-06-01T13:02:50.215Z>
+<info added on 2025-06-01T13:06:21.856Z>
+Based on our implementation of the enhanced dependency validation utilities, we've successfully integrated Monday.com's dependency features into our validation framework. The implementation includes:
+
+1. A new DependencyValidationUtils class that handles both local and Monday.com validation contexts, with specialized methods for:
+   - Task existence verification across both systems
+   - Circular dependency detection using DFS graph traversal on Monday.com board relations
+   - Comprehensive relationship validation supporting all Monday.com dependency types (finish to start, start to start, finish to finish, start to finish)
+   - Monday.com-specific constraint validation accounting for flexibility settings (flexible, strict, no action)
+
+2. Enhanced addDependency function with integrated validation that:
+   - Performs pre-validation checks before attempting to create dependencies
+   - Initializes Monday.com context with appropriate fallbacks
+   - Provides detailed error reporting through the UI
+   - Maintains backward compatibility with our existing validation framework
+
+3. API integration features including:
+   - Helper functions for Monday.com item existence validation
+   - ID mapping between our subtasks and Monday.com items
+   - Validation against known API limitations regarding dependency types and lag settings
+   - Graceful fallback mechanisms when API validation fails
+
+4. Comprehensive error handling with:
+   - Structured error responses detailing specific validation issues
+   - Visual error displays using our boxed message system
+   - Degradation paths when Monday.com integration is unavailable
+   - Detailed logging for troubleshooting
+
+All validation utilities have been implemented and integrated with the add dependency functions. The next step is to integrate these utilities with the remove dependency functions and proceed with testing.
+</info added on 2025-06-01T13:06:21.856Z>
+<info added on 2025-06-01T13:08:20.711Z>
+The validation utilities have now been integrated into the removeDependency function to ensure robust validation during dependency removal. This integration includes checks to confirm the existence of the dependency before removal, validation of Monday.com context and board relation consistency, and detailed error reporting for any removal failures. Backward compatibility with existing removal logic is maintained. With this, the DependencyValidationUtils are fully integrated across all dependency management functions, completing the validation framework for both addition and removal operations.
+</info added on 2025-06-01T13:08:20.711Z>
+<info added on 2025-06-01T13:09:47.870Z>
+The dependency validation and circular reference prevention utilities have been successfully implemented and integrated with both the add and remove dependency functions. Our implementation includes:
+
+1. A comprehensive DependencyValidationUtils class with specialized methods for:
+   - Task existence verification across both local and Monday.com systems
+   - Circular dependency detection using DFS graph traversal on Monday.com board relations
+   - Relationship validation supporting all Monday.com dependency types
+   - Monday.com-specific constraint validation for flexibility settings
+
+2. Enhanced dependency management functions with:
+   - Pre-validation checks before dependency operations
+   - Monday.com context initialization with appropriate fallbacks
+   - Detailed error reporting through the UI
+   - Backward compatibility with existing validation framework
+
+3. Full Monday.com integration supporting:
+   - Board relation column operations
+   - Dependency type validation (finish-to-start, start-to-start, etc.)
+   - API constraint validation with handling for known limitations
+   - Graceful degradation when API validation fails
+
+4. Comprehensive error handling providing:
+   - Structured error responses with detailed issue breakdown
+   - Visual error displays using our boxed message system
+   - Detailed logging for troubleshooting
+
+All validation utilities have been fully implemented and integrated with both the add and remove dependency functions, completing the validation framework as required.
+</info added on 2025-06-01T13:09:47.870Z>
+
+## 4. Update Dependency Visualization to Use Monday.com Data Structures [pending]
+### Dependencies: 9.3
+### Description: Refactor the dependency visualization components to read from Monday.com board relation columns and accurately display task relationships.
+### Details:
+Modify visualization logic to fetch dependency data from Monday.com via API calls. Ensure that the UI reflects real-time changes in dependencies and supports different dependency types (e.g., finish-to-start, start-to-start). Maintain compatibility with local data for legacy projects.
+
+## 5. Implement Dependency Impact Analysis and Efficient Querying [pending]
+### Dependencies: 9.4
+### Description: Add support for analyzing the impact of task modifications or deletions on dependencies, and implement efficient querying using Monday.com API filters.
+### Details:
+When a task is modified or deleted, analyze which dependent tasks are affected and update them as needed. Use Monday.com API filtering capabilities to efficiently query dependencies and their impact. Ensure that the analysis works seamlessly for both Monday.com and local persistence modes.
+

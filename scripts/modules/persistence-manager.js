@@ -6,11 +6,12 @@
  * to either local file storage or Monday.com API based on the current configuration.
  */
 
-import { readJSON, writeJSON } from './utils.js';
+import { readJSON as readJSONLocal, writeJSON as writeJSONLocal } from './utils.js';
 import { log } from './utils.js';
 import { getPersistenceMode, getMondayEnabled } from './monday-config-manager.js';
 import { mondayPersistence } from './monday-persistence.js';
 import { ensureBackwardCompatibility, checkBackwardCompatibility } from './backward-compatibility.js';
+import { getConfig } from './config-manager.js';
 
 /**
  * Unified Persistence Manager
@@ -34,17 +35,32 @@ class PersistenceManager {
 			// First, ensure backward compatibility
 			const compatibilityCheck = await checkBackwardCompatibility(projectRoot);
 			
+			// Only perform migration if genuinely needed AND the config doesn't already have Monday settings configured
 			if (compatibilityCheck.needsMigration) {
-				log('info', `Project requires migration from ${compatibilityCheck.state}. Attempting automatic migration...`);
-				const migrationResult = await ensureBackwardCompatibility(projectRoot, { autoMigrate: true, backup: true });
+				// Check if Monday configuration is already properly set up
+				const config = getConfig(projectRoot);
+				const hasMondayConfig = config && config.monday && typeof config.monday === 'object';
+				const hasMondaySettings = hasMondayConfig && (
+					config.monday.enabled !== undefined ||
+					config.monday.boardId ||
+					config.monday.persistenceMode
+				);
 				
-				if (migrationResult.success) {
-					log('success', `Migration completed successfully: ${migrationResult.message}`);
+				// Only migrate if there's no Monday configuration or it's completely empty/default
+				if (!hasMondaySettings) {
+					log('info', `Project requires migration from ${compatibilityCheck.state}. Attempting automatic migration...`);
+					const migrationResult = await ensureBackwardCompatibility(projectRoot, { autoMigrate: true, backup: true });
+					
+					if (migrationResult.success) {
+						log('success', `Migration completed successfully: ${migrationResult.message}`);
+					} else {
+						log('warn', `Migration failed: ${migrationResult.message}. Falling back to local mode.`);
+						this.currentMode = 'local';
+						this.initialized = true;
+						return { success: true, mode: this.currentMode, migrationAttempted: true, migrationFailed: true };
+					}
 				} else {
-					log('warn', `Migration failed: ${migrationResult.message}. Falling back to local mode.`);
-					this.currentMode = 'local';
-					this.initialized = true;
-					return { success: true, mode: this.currentMode, migrationAttempted: true, migrationFailed: true };
+					log('info', 'Monday configuration already exists, skipping automatic migration');
 				}
 			}
 			
@@ -331,14 +347,14 @@ class PersistenceManager {
 	 */
 	async _readLocal(tasksPath, options = {}) {
 		try {
-			return readJSON(tasksPath);
+			return readJSONLocal(tasksPath);
 		} catch (error) {
 			// Handle backward compatibility for legacy task file locations
 			if (tasksPath.includes('tasks/tasks.json')) {
 				const legacyPath = tasksPath.replace('tasks/tasks.json', 'tasks.json');
 				try {
 					log('info', 'Trying legacy tasks.json location for backward compatibility');
-					return readJSON(legacyPath);
+					return readJSONLocal(legacyPath);
 				} catch (legacyError) {
 					// Both modern and legacy paths failed
 					throw error; // Throw the original error
@@ -354,7 +370,7 @@ class PersistenceManager {
 	 */
 	async _writeLocal(tasksPath, data, options = {}) {
 		try {
-			writeJSON(tasksPath, data);
+			writeJSONLocal(tasksPath, data);
 			return true;
 		} catch (error) {
 			log('error', `Local file write failed: ${error.message}`);

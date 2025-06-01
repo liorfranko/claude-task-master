@@ -1,0 +1,25 @@
+# Task ID: 33
+# Title: Test Environment Variable Loading Explicitly
+# Status: pending
+# Dependencies: 1, 32
+# Priority: medium
+# Description: Conduct comprehensive testing to verify that environment variables are loaded correctly and explicitly across all application modules, particularly for Monday.com integration configuration.
+# Details:
+Create thorough tests to validate that environment variables are being loaded properly and explicitly throughout the application. This involves testing different environment loading scenarios including:
+
+1. **Environment Variable Detection**: Test that all required environment variables (MONDAY_API_TOKEN, MONDAY_BOARD_ID, etc.) are properly detected and loaded at application startup. Create test cases for missing variables, invalid values, and proper fallback mechanisms.
+
+2. **Explicit Loading Verification**: Implement tests that explicitly verify environment variable loading by temporarily modifying or removing environment files (.env, .env.local, .env.test) and ensuring the application handles these scenarios gracefully. Test both dotenv loading and system environment variable precedence.
+
+3. **Configuration Module Testing**: If a configuration module exists, test that it properly loads and validates environment variables. Verify that configuration values are accessible throughout the application and that sensitive values are properly handled.
+
+4. **Monday.com Integration Environment Testing**: Specifically test that Monday.com API credentials and configuration are loaded correctly from environment variables. Verify that the API client can authenticate using environment-loaded credentials.
+
+5. **Cross-Environment Testing**: Test environment variable loading across different environments (development, testing, production) to ensure consistency and proper isolation.
+
+6. **Error Handling**: Test scenarios where environment variables are malformed, missing, or contain invalid values, ensuring the application provides clear error messages and fails gracefully.
+
+Include tests for environment variable validation, type conversion (strings to numbers/booleans), and security considerations like masking sensitive values in logs.
+
+# Test Strategy:
+1. Create unit tests that mock different environment variable scenarios and verify proper loading behavior. 2. Implement integration tests that start the application with various environment configurations and validate functionality. 3. Test environment variable precedence by setting values in multiple locations (.env files, system environment, etc.) and verifying correct priority. 4. Validate that Monday.com integration works correctly with environment-loaded credentials by performing actual API calls in a test environment. 5. Test error scenarios by temporarily removing or corrupting environment files and verifying appropriate error handling. 6. Use environment variable validation tools or custom validators to ensure all required variables are present and properly formatted. 7. Verify that sensitive environment variables are not exposed in logs or error messages during testing.

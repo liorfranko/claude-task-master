@@ -21,18 +21,38 @@ import { displayBanner } from './ui.js';
 
 import { generateTaskFiles } from './task-manager.js';
 
+// Import persistence manager for unified data access
+import { persistenceManager } from './persistence-manager.js';
+
+// Import Monday.com specific modules for dependency handling
+import { getMondayEnabled, getMondayConfig, getMondayColumnMapping } from './monday-config-manager.js';
+import { MondayApiClient } from './monday-api-client.js';
+import { transformTaskToMondayColumns } from './monday-data-transformer.js';
+
 /**
  * Add a dependency to a task
  * @param {string} tasksPath - Path to the tasks.json file
  * @param {number|string} taskId - ID of the task to add dependency to
  * @param {number|string} dependencyId - ID of the task to add as dependency
+ * @param {Object} context - Context object with session, projectRoot, etc.
  */
-async function addDependency(tasksPath, taskId, dependencyId) {
+async function addDependency(tasksPath, taskId, dependencyId, context = {}) {
+	const { session, projectRoot } = context;
+	
 	log('info', `Adding dependency ${dependencyId} to task ${taskId}...`);
 
-	const data = readJSON(tasksPath);
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
+
+	// Check if Monday.com is enabled for enhanced dependency management
+	const mondayEnabled = getMondayEnabled();
+	const mondayConfig = mondayEnabled ? getMondayConfig() : null;
+	const mondayColumnMapping = mondayEnabled ? getMondayColumnMapping() : null;
+
+	// Use persistence manager to read tasks
+	const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 	if (!data || !data.tasks) {
-		log('error', 'No valid tasks found in tasks.json');
+		log('error', 'No valid tasks found');
 		process.exit(1);
 	}
 
@@ -48,7 +68,7 @@ async function addDependency(tasksPath, taskId, dependencyId) {
 	if (!taskExists(data.tasks, formattedDependencyId)) {
 		log(
 			'error',
-			`Dependency target ${formattedDependencyId} does not exist in tasks.json`
+			`Dependency target ${formattedDependencyId} does not exist`
 		);
 		process.exit(1);
 	}
@@ -110,101 +130,149 @@ async function addDependency(tasksPath, taskId, dependencyId) {
 		return;
 	}
 
-	// Check if the task is trying to depend on itself - compare full IDs (including subtask parts)
-	if (String(formattedTaskId) === String(formattedDependencyId)) {
-		log('error', `Task ${formattedTaskId} cannot depend on itself.`);
-		process.exit(1);
-	}
-
-	// For subtasks of the same parent, we need to make sure we're not treating it as a self-dependency
-	// Check if we're dealing with subtasks with the same parent task
-	let isSelfDependency = false;
-
-	if (
-		typeof formattedTaskId === 'string' &&
-		typeof formattedDependencyId === 'string' &&
-		formattedTaskId.includes('.') &&
-		formattedDependencyId.includes('.')
-	) {
-		const [taskParentId] = formattedTaskId.split('.');
-		const [depParentId] = formattedDependencyId.split('.');
-
-		// Only treat it as a self-dependency if both the parent ID and subtask ID are identical
-		isSelfDependency = formattedTaskId === formattedDependencyId;
-
-		// Log for debugging
-		log(
-			'debug',
-			`Adding dependency between subtasks: ${formattedTaskId} depends on ${formattedDependencyId}`
-		);
-		log(
-			'debug',
-			`Parent IDs: ${taskParentId} and ${depParentId}, Self-dependency check: ${isSelfDependency}`
-		);
-	}
-
-	if (isSelfDependency) {
-		log('error', `Subtask ${formattedTaskId} cannot depend on itself.`);
-		process.exit(1);
-	}
-
-	// Check for circular dependencies
-	let dependencyChain = [formattedTaskId];
-	if (
-		!isCircularDependency(data.tasks, formattedDependencyId, dependencyChain)
-	) {
-		// Add the dependency
-		targetTask.dependencies.push(formattedDependencyId);
-
-		// Sort dependencies numerically or by parent task ID first, then subtask ID
-		targetTask.dependencies.sort((a, b) => {
-			if (typeof a === 'number' && typeof b === 'number') {
-				return a - b;
-			} else if (typeof a === 'string' && typeof b === 'string') {
-				const [aParent, aChild] = a.split('.').map(Number);
-				const [bParent, bChild] = b.split('.').map(Number);
-				return aParent !== bParent ? aParent - bParent : aChild - bChild;
-			} else if (typeof a === 'number') {
-				return -1; // Numbers come before strings
-			} else {
-				return 1; // Strings come after numbers
+	// Enhanced validation using new Monday.com-aware utilities
+	let mondayContext = null;
+	if (mondayEnabled && mondayConfig && mondayColumnMapping) {
+		try {
+			// Get the Monday.com API client
+			const MondayApiClient = await import('./monday-api-client.js');
+			const mondayClient = MondayApiClient.getMondayApiClient();
+			
+			if (!mondayClient.initialized) {
+				const apiKey = session?.env?.MONDAY_API_KEY || process.env.MONDAY_API_KEY;
+				if (apiKey) {
+					await mondayClient.initializeClient(apiKey);
+				}
 			}
-		});
 
-		// Save changes
-		writeJSON(tasksPath, data);
-		log(
-			'success',
-			`Added dependency ${formattedDependencyId} to task ${formattedTaskId}`
-		);
+			if (mondayClient.initialized) {
+				mondayContext = {
+					enabled: true,
+					mondayClient,
+					boardId: mondayConfig.boardId,
+					relationColumnId: mondayColumnMapping.dependencies?.mondayColumn || 'dependencies'
+				};
+			}
+		} catch (error) {
+			log('warn', `Failed to initialize Monday.com context for validation: ${error.message}`);
+		}
+	}
 
-		// Display a more visually appealing success message
+	// Comprehensive dependency validation
+	const validationResult = await DependencyValidationUtils.validateDependencyRelationship({
+		tasks: data.tasks,
+		taskId: formattedTaskId,
+		dependencyId: formattedDependencyId,
+		mondayContext,
+		validateExistence: true,
+		validateCircular: true,
+		validateSelfDependency: true
+	});
+
+	if (!validationResult.valid) {
+		const errorMessages = validationResult.issues.map(issue => issue.message).join('\n');
+		log('error', `Cannot add dependency:\n${errorMessages}`);
+		
+		// Display detailed error information
 		if (!isSilentMode()) {
 			console.log(
 				boxen(
-					chalk.green(`Successfully added dependency:\n\n`) +
-						`Task ${chalk.bold(formattedTaskId)} now depends on ${chalk.bold(formattedDependencyId)}`,
+					chalk.red(`Dependency Validation Failed:\n\n`) +
+						validationResult.issues.map(issue => 
+							`${chalk.yellow(`[${issue.type.toUpperCase()}]`)} ${issue.message}`
+						).join('\n'),
 					{
 						padding: 1,
-						borderColor: 'green',
+						borderColor: 'red',
 						borderStyle: 'round',
 						margin: { top: 1 }
 					}
 				)
 			);
 		}
-
-		// Generate updated task files
-		await generateTaskFiles(tasksPath, path.dirname(tasksPath));
-
-		log('info', 'Task files regenerated with updated dependencies.');
-	} else {
-		log(
-			'error',
-			`Cannot add dependency ${formattedDependencyId} to task ${formattedTaskId} as it would create a circular dependency.`
-		);
 		process.exit(1);
 	}
+
+	// Validation passed - proceed with adding the dependency
+	targetTask.dependencies.push(formattedDependencyId);
+
+	// Sort dependencies numerically or by parent task ID first, then subtask ID
+	targetTask.dependencies.sort((a, b) => {
+		if (typeof a === 'number' && typeof b === 'number') {
+			return a - b;
+		} else if (typeof a === 'string' && typeof b === 'string') {
+			const [aParent, aChild] = a.split('.').map(Number);
+			const [bParent, bChild] = b.split('.').map(Number);
+			return aParent !== bParent ? aParent - bParent : aChild - bChild;
+		} else if (typeof a === 'number') {
+			return -1; // Numbers come before strings
+		} else {
+			return 1; // Strings come after numbers
+		}
+	});
+
+	// If Monday.com is enabled, also update the board relation column
+	let mondayRelationSuccess = true;
+	if (mondayContext && mondayContext.enabled) {
+		try {
+			log('info', 'Updating Monday.com board relation for dependency...');
+			
+			// Convert task IDs to Monday.com item IDs for board relations
+			const mondayTaskId = typeof formattedTaskId === 'string' && formattedTaskId.includes('.') 
+				? parseInt(formattedTaskId.split('.')[0], 10) 
+				: parseInt(formattedTaskId, 10);
+			const mondayDependencyItemId = typeof formattedDependencyId === 'string' && formattedDependencyId.includes('.') 
+				? parseInt(formattedDependencyId.split('.')[0], 10) 
+				: parseInt(formattedDependencyId, 10);
+			
+			// Add the board relation in Monday.com
+			await mondayContext.mondayClient.addBoardRelation(
+				mondayTaskId, 
+				mondayContext.relationColumnId, 
+				mondayDependencyItemId
+			);
+			
+			log('success', `Updated Monday.com board relation: Item ${mondayTaskId} now depends on ${mondayDependencyItemId}`);
+		} catch (mondayError) {
+			log('warn', `Failed to update Monday.com board relation: ${mondayError.message}`);
+			log('info', 'Continuing with local dependency storage...');
+			mondayRelationSuccess = false;
+		}
+	}
+
+	// Use persistence manager to save changes
+	await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
+	
+	log(
+		'success',
+		`Added dependency ${formattedDependencyId} to task ${formattedTaskId}`
+	);
+
+	// Display a more visually appealing success message
+	if (!isSilentMode()) {
+		const mondayStatus = mondayContext && mondayContext.enabled && mondayRelationSuccess ? 
+			chalk.green(' (✓ Monday.com synced)') : 
+			mondayContext && mondayContext.enabled ? chalk.yellow(' (⚠ Monday.com sync failed)') : '';
+			
+		console.log(
+			boxen(
+				chalk.green(`Successfully added dependency:\n\n`) +
+					`Task ${chalk.bold(formattedTaskId)} now depends on ${chalk.bold(formattedDependencyId)}` +
+					mondayStatus,
+				{
+					padding: 1,
+					borderColor: 'green',
+					borderStyle: 'round',
+					margin: { top: 1 }
+				}
+			)
+		);
+	}
+
+	// Generate updated task files
+	await generateTaskFiles(tasksPath, path.dirname(tasksPath), {}, { session, projectRoot });
+
+	log('info', 'Task files regenerated with updated dependencies.');
 }
 
 /**
@@ -212,12 +280,23 @@ async function addDependency(tasksPath, taskId, dependencyId) {
  * @param {string} tasksPath - Path to the tasks.json file
  * @param {number|string} taskId - ID of the task to remove dependency from
  * @param {number|string} dependencyId - ID of the task to remove as dependency
+ * @param {Object} context - Context object with session, projectRoot, etc.
  */
-async function removeDependency(tasksPath, taskId, dependencyId) {
+async function removeDependency(tasksPath, taskId, dependencyId, context = {}) {
+	const { session, projectRoot } = context;
+	
 	log('info', `Removing dependency ${dependencyId} from task ${taskId}...`);
 
-	// Read tasks file
-	const data = readJSON(tasksPath);
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
+
+	// Check if Monday.com is enabled for enhanced dependency management
+	const mondayEnabled = getMondayEnabled();
+	const mondayConfig = mondayEnabled ? getMondayConfig() : null;
+	const mondayColumnMapping = mondayEnabled ? getMondayColumnMapping() : null;
+
+	// Use persistence manager to read tasks
+	const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 	if (!data || !data.tasks) {
 		log('error', 'No valid tasks found.');
 		process.exit(1);
@@ -230,6 +309,61 @@ async function removeDependency(tasksPath, taskId, dependencyId) {
 			: parseInt(taskId, 10);
 
 	const formattedDependencyId = formatTaskId(dependencyId);
+
+	// Initialize Monday.com context for validation
+	let mondayContext = null;
+	if (mondayEnabled && mondayConfig && mondayColumnMapping) {
+		try {
+			// Get the Monday.com API client
+			const MondayApiClient = await import('./monday-api-client.js');
+			const mondayClient = MondayApiClient.getMondayApiClient();
+			
+			if (!mondayClient.initialized) {
+				const apiKey = session?.env?.MONDAY_API_KEY || process.env.MONDAY_API_KEY;
+				if (apiKey) {
+					await mondayClient.initializeClient(apiKey);
+				}
+			}
+
+			if (mondayClient.initialized) {
+				mondayContext = {
+					enabled: true,
+					mondayClient,
+					boardId: mondayConfig.boardId,
+					relationColumnId: mondayColumnMapping.dependencies?.mondayColumn || 'dependencies'
+				};
+			}
+		} catch (error) {
+			log('warn', `Failed to initialize Monday.com context for validation: ${error.message}`);
+		}
+	}
+
+	// Validate task existence before proceeding
+	const taskExistenceResult = await DependencyValidationUtils.validateTaskExistence(
+		data.tasks, 
+		formattedTaskId, 
+		mondayContext
+	);
+
+	if (!taskExistenceResult.valid) {
+		log('error', `Task ${formattedTaskId} does not exist`);
+		
+		if (!isSilentMode()) {
+			console.log(
+				boxen(
+					chalk.red(`Task Not Found:\n\n`) +
+						`Task ${chalk.bold(formattedTaskId)} does not exist in the system`,
+					{
+						padding: 1,
+						borderColor: 'red',
+						borderStyle: 'round',
+						margin: { top: 1 }
+					}
+				)
+			);
+		}
+		process.exit(1);
+	}
 
 	// Find the task to update
 	let targetTask = null;
@@ -298,18 +432,70 @@ async function removeDependency(tasksPath, taskId, dependencyId) {
 	});
 
 	if (dependencyIndex === -1) {
-		log(
-			'info',
-			`Task ${formattedTaskId} does not depend on ${formattedDependencyId}, no changes made.`
+		// Enhanced validation to provide better error messaging
+		const dependencyExistenceResult = await DependencyValidationUtils.validateTaskExistence(
+			data.tasks, 
+			formattedDependencyId, 
+			mondayContext
 		);
+
+		let errorMessage = `Task ${formattedTaskId} does not depend on ${formattedDependencyId}`;
+		if (!dependencyExistenceResult.valid) {
+			errorMessage += ` (dependency target does not exist)`;
+		}
+
+		log('info', `${errorMessage}, no changes made.`);
+		
+		if (!isSilentMode()) {
+			console.log(
+				boxen(
+					chalk.yellow(`Dependency Not Found:\n\n`) +
+						errorMessage,
+					{
+						padding: 1,
+						borderColor: 'yellow',
+						borderStyle: 'round',
+						margin: { top: 1 }
+					}
+				)
+			);
+		}
 		return;
 	}
 
-	// Remove the dependency
+	// Remove the dependency from local data structure
 	targetTask.dependencies.splice(dependencyIndex, 1);
 
-	// Save the updated tasks
-	writeJSON(tasksPath, data);
+	// If Monday.com is enabled, also update the board relation column
+	let mondayRelationSuccess = true;
+	if (mondayEnabled && mondayConfig && mondayColumnMapping && mondayContext && mondayContext.enabled) {
+		try {
+			log('info', 'Removing Monday.com board relation for dependency...');
+			
+			const { mondayClient, boardId, relationColumnId } = mondayContext;
+			
+			// Convert task ID to Monday.com item ID (assuming 1:1 mapping for now)
+			// In a full implementation, you might need a mapping table
+			const mondayItemId = parseInt(formattedTaskId, 10);
+			const mondayDependencyItemId = parseInt(formattedDependencyId, 10);
+			
+			// Remove the board relation in Monday.com
+			await mondayClient.removeBoardRelation(
+				mondayItemId, 
+				relationColumnId, 
+				mondayDependencyItemId
+			);
+			
+			log('success', `Removed Monday.com board relation: Item ${mondayItemId} no longer depends on ${mondayDependencyItemId}`);
+		} catch (mondayError) {
+			log('warn', `Failed to update Monday.com board relation: ${mondayError.message}`);
+			log('info', 'Continuing with local dependency removal...');
+			mondayRelationSuccess = false;
+		}
+	}
+
+	// Use persistence manager to save the updated tasks
+	await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
 
 	// Success message
 	log(
@@ -318,11 +504,16 @@ async function removeDependency(tasksPath, taskId, dependencyId) {
 	);
 
 	if (!isSilentMode()) {
-		// Display a more visually appealing success message
+		// Display a more visually appealing success message with Monday.com status
+		const mondayStatus = mondayEnabled && mondayRelationSuccess ? 
+			chalk.green(' (✓ Monday.com synced)') : 
+			mondayEnabled ? chalk.yellow(' (⚠ Monday.com sync failed)') : '';
+			
 		console.log(
 			boxen(
 				chalk.green(`Successfully removed dependency:\n\n`) +
-					`Task ${chalk.bold(formattedTaskId)} no longer depends on ${chalk.bold(formattedDependencyId)}`,
+					`Task ${chalk.bold(formattedTaskId)} no longer depends on ${chalk.bold(formattedDependencyId)}` +
+					mondayStatus,
 				{
 					padding: 1,
 					borderColor: 'green',
@@ -334,7 +525,9 @@ async function removeDependency(tasksPath, taskId, dependencyId) {
 	}
 
 	// Regenerate task files
-	await generateTaskFiles(tasksPath, path.dirname(tasksPath));
+	await generateTaskFiles(tasksPath, path.dirname(tasksPath), {}, { session, projectRoot });
+
+	log('info', 'Task files regenerated with updated dependencies.');
 }
 
 /**
@@ -393,6 +586,429 @@ function isCircularDependency(tasks, taskId, chain = []) {
 		// Pass the normalized ID to the recursive call
 		return isCircularDependency(tasks, normalizedDepId, newChain);
 	});
+}
+
+/**
+ * Enhanced validation utilities for Monday.com compatibility
+ */
+class DependencyValidationUtils {
+	/**
+	 * Helper function to check if a Monday.com item exists
+	 * @param {Object} mondayClient - Monday.com API client
+	 * @param {number} itemId - Item ID to check
+	 * @returns {boolean} True if item exists
+	 */
+	static async checkMondayItemExists(mondayClient, itemId) {
+		try {
+			await mondayClient.getItemDetails(itemId, ['id']);
+			return true;
+		} catch (error) {
+			// If item doesn't exist, getItemDetails will throw an error
+			return false;
+		}
+	}
+
+	/**
+	 * Validate task existence with Monday.com support
+	 * @param {Array} tasks - Local tasks array
+	 * @param {string|number} taskId - Task ID to validate
+	 * @param {Object} mondayContext - Optional Monday.com context
+	 * @returns {Object} Validation result with existence status and Monday.com info
+	 */
+	static async validateTaskExistence(tasks, taskId, mondayContext = null) {
+		// First check local existence using existing utility
+		const localExists = taskExists(tasks, taskId);
+		
+		// If Monday.com context is provided, also validate against Monday.com
+		if (mondayContext && mondayContext.enabled) {
+			try {
+				const { mondayClient, boardId } = mondayContext;
+				
+				// Convert task ID to Monday.com item ID
+				let mondayItemId;
+				if (typeof taskId === 'string' && taskId.includes('.')) {
+					// For subtasks, use parent task ID for Monday.com validation
+					const [parentId] = taskId.split('.');
+					mondayItemId = parseInt(parentId, 10);
+				} else {
+					mondayItemId = parseInt(taskId, 10);
+				}
+				
+				// Check if item exists in Monday.com board
+				const mondayExists = await this.checkMondayItemExists(mondayClient, mondayItemId);
+				
+				return {
+					localExists,
+					mondayExists,
+					taskId,
+					mondayItemId,
+					valid: localExists && mondayExists,
+					source: 'hybrid'
+				};
+			} catch (error) {
+				log('warn', `Failed to validate task existence in Monday.com: ${error.message}`);
+				// Fallback to local validation only
+				return {
+					localExists,
+					mondayExists: null,
+					taskId,
+					valid: localExists,
+					source: 'local',
+					error: error.message
+				};
+			}
+		}
+		
+		// Local validation only
+		return {
+			localExists,
+			mondayExists: null,
+			taskId,
+			valid: localExists,
+			source: 'local'
+		};
+	}
+
+	/**
+	 * Enhanced circular dependency detection with Monday.com board relation support
+	 * @param {Array} tasks - Local tasks array
+	 * @param {string|number} taskId - Task ID to check
+	 * @param {Array} chain - Current dependency chain
+	 * @param {Object} mondayContext - Optional Monday.com context
+	 * @returns {Object} Circular dependency validation result
+	 */
+	static async validateCircularDependency(tasks, taskId, chain = [], mondayContext = null) {
+		// Use existing circular dependency logic as baseline
+		const localCircular = isCircularDependency(tasks, taskId, chain);
+		
+		// If Monday.com context is provided, validate against board relations
+		if (mondayContext && mondayContext.enabled && !localCircular) {
+			try {
+				const { mondayClient, boardId, relationColumnId } = mondayContext;
+				
+				// Convert task ID to Monday.com item ID
+				let mondayItemId;
+				if (typeof taskId === 'string' && taskId.includes('.')) {
+					const [parentId] = taskId.split('.');
+					mondayItemId = parseInt(parentId, 10);
+				} else {
+					mondayItemId = parseInt(taskId, 10);
+				}
+				
+				// Check for circular dependencies using Monday.com board relations
+				const mondayCircular = await this.checkMondayCircularDependency(
+					mondayClient, 
+					boardId, 
+					relationColumnId, 
+					mondayItemId, 
+					chain.map(id => typeof id === 'string' && id.includes('.') ? parseInt(id.split('.')[0], 10) : parseInt(id, 10))
+				);
+				
+				return {
+					localCircular,
+					mondayCircular,
+					taskId,
+					chain: [...chain],
+					hasCircularDependency: localCircular || mondayCircular,
+					source: 'hybrid'
+				};
+			} catch (error) {
+				log('warn', `Failed to validate circular dependency in Monday.com: ${error.message}`);
+				// Fallback to local validation
+				return {
+					localCircular,
+					mondayCircular: null,
+					taskId,
+					chain: [...chain],
+					hasCircularDependency: localCircular,
+					source: 'local',
+					error: error.message
+				};
+			}
+		}
+		
+		// Local validation only
+		return {
+			localCircular,
+			mondayCircular: null,
+			taskId,
+			chain: [...chain],
+			hasCircularDependency: localCircular,
+			source: 'local'
+		};
+	}
+
+	/**
+	 * Check circular dependencies using Monday.com board relations
+	 * @param {Object} mondayClient - Monday.com API client
+	 * @param {string} boardId - Monday.com board ID
+	 * @param {string} relationColumnId - Board relation column ID
+	 * @param {number} itemId - Monday.com item ID to check
+	 * @param {Array} visitedIds - Array of already visited item IDs
+	 * @returns {boolean} True if circular dependency detected
+	 */
+	static async checkMondayCircularDependency(mondayClient, boardId, relationColumnId, itemId, visitedIds = []) {
+		// If we've seen this item before, we have a circular dependency
+		if (visitedIds.includes(itemId)) {
+			return true;
+		}
+		
+		// Get the item's dependencies from Monday.com board relation column
+		try {
+			const itemDetails = await mondayClient.getItemDetails(itemId, [relationColumnId]);
+			const relationValue = itemDetails.column_values.find(cv => cv.id === relationColumnId);
+			
+			if (!relationValue || !relationValue.value) {
+				return false; // No dependencies
+			}
+			
+			// Parse the board relation value to get linked item IDs
+			const relationData = JSON.parse(relationValue.value);
+			const linkedItemIds = relationData.linkedPulseIds || [];
+			
+			if (linkedItemIds.length === 0) {
+				return false; // No dependencies
+			}
+			
+			// Check each dependency recursively
+			const newVisitedIds = [...visitedIds, itemId];
+			for (const linkedItemId of linkedItemIds) {
+				const hasCircular = await this.checkMondayCircularDependency(
+					mondayClient, 
+					boardId, 
+					relationColumnId, 
+					linkedItemId, 
+					newVisitedIds
+				);
+				if (hasCircular) {
+					return true;
+				}
+			}
+			
+			return false;
+		} catch (error) {
+			log('warn', `Failed to check Monday.com circular dependency for item ${itemId}: ${error.message}`);
+			return false; // Assume no circular dependency on error
+		}
+	}
+
+	/**
+	 * Validate dependency relationship with Monday.com constraints
+	 * @param {Object} params - Validation parameters
+	 * @returns {Object} Comprehensive validation result
+	 */
+	static async validateDependencyRelationship(params) {
+		const {
+			tasks,
+			taskId,
+			dependencyId,
+			mondayContext = null,
+			validateExistence = true,
+			validateCircular = true,
+			validateSelfDependency = true
+		} = params;
+
+		const issues = [];
+		let valid = true;
+
+		// Self-dependency validation
+		if (validateSelfDependency && String(taskId) === String(dependencyId)) {
+			issues.push({
+				type: 'self',
+				taskId,
+				dependencyId,
+				message: `Task ${taskId} cannot depend on itself`,
+				source: 'validation'
+			});
+			valid = false;
+		}
+
+		// Task existence validation
+		if (validateExistence) {
+			const taskExistenceResult = await this.validateTaskExistence(tasks, taskId, mondayContext);
+			const depExistenceResult = await this.validateTaskExistence(tasks, dependencyId, mondayContext);
+
+			if (!taskExistenceResult.valid) {
+				issues.push({
+					type: 'missing',
+					taskId,
+					dependencyId: null,
+					message: `Task ${taskId} does not exist`,
+					source: taskExistenceResult.source,
+					mondayDetails: taskExistenceResult
+				});
+				valid = false;
+			}
+
+			if (!depExistenceResult.valid) {
+				issues.push({
+					type: 'missing',
+					taskId,
+					dependencyId,
+					message: `Dependency ${dependencyId} does not exist`,
+					source: depExistenceResult.source,
+					mondayDetails: depExistenceResult
+				});
+				valid = false;
+			}
+		}
+
+		// Circular dependency validation
+		if (validateCircular && valid) {
+			const circularResult = await this.validateCircularDependency(
+				tasks, 
+				dependencyId, 
+				[taskId], 
+				mondayContext
+			);
+
+			if (circularResult.hasCircularDependency) {
+				issues.push({
+					type: 'circular',
+					taskId,
+					dependencyId,
+					message: `Adding dependency ${dependencyId} to task ${taskId} would create a circular dependency`,
+					chain: circularResult.chain,
+					source: circularResult.source
+				});
+				valid = false;
+			}
+		}
+
+		// Monday.com specific validations
+		if (mondayContext && mondayContext.enabled && valid) {
+			try {
+				const mondayValidationResult = await this.validateMondayConstraints(
+					taskId, 
+					dependencyId, 
+					mondayContext
+				);
+				
+				if (!mondayValidationResult.valid) {
+					issues.push(...mondayValidationResult.issues);
+					valid = false;
+				}
+			} catch (error) {
+				log('warn', `Monday.com constraint validation failed: ${error.message}`);
+				// Don't mark as invalid due to Monday.com validation failure
+			}
+		}
+
+		return {
+			valid,
+			issues,
+			taskId,
+			dependencyId,
+			mondayContext: mondayContext ? mondayContext.enabled : false
+		};
+	}
+
+	/**
+	 * Validate Monday.com specific constraints for dependencies
+	 * @param {string|number} taskId - Task ID
+	 * @param {string|number} dependencyId - Dependency ID
+	 * @param {Object} mondayContext - Monday.com context
+	 * @returns {Object} Monday.com constraint validation result
+	 */
+	static async validateMondayConstraints(taskId, dependencyId, mondayContext) {
+		const issues = [];
+		let valid = true;
+
+		try {
+			const { mondayClient, boardId, relationColumnId } = mondayContext;
+
+			// Convert to Monday.com item IDs
+			const mondayTaskId = typeof taskId === 'string' && taskId.includes('.') 
+				? parseInt(taskId.split('.')[0], 10) 
+				: parseInt(taskId, 10);
+			const mondayDepId = typeof dependencyId === 'string' && dependencyId.includes('.') 
+				? parseInt(dependencyId.split('.')[0], 10) 
+				: parseInt(dependencyId, 10);
+
+			// Check if items are in the same board
+			const taskInBoard = await this.checkMondayItemExists(mondayClient, mondayTaskId);
+			const depInBoard = await this.checkMondayItemExists(mondayClient, mondayDepId);
+
+			if (!taskInBoard) {
+				issues.push({
+					type: 'monday_constraint',
+					taskId,
+					dependencyId: null,
+					message: `Task ${taskId} (item ${mondayTaskId}) is not in Monday.com board ${boardId}`,
+					source: 'monday'
+				});
+				valid = false;
+			}
+
+			if (!depInBoard) {
+				issues.push({
+					type: 'monday_constraint',
+					taskId,
+					dependencyId,
+					message: `Dependency ${dependencyId} (item ${mondayDepId}) is not in Monday.com board ${boardId}`,
+					source: 'monday'
+				});
+				valid = false;
+			}
+
+			// Validate against Monday.com API limits
+			if (valid) {
+				const currentDependencies = await this.getMondayItemDependencies(
+					mondayClient, 
+					mondayTaskId, 
+					relationColumnId
+				);
+
+				// Check if we're approaching Monday.com item relation limits
+				if (currentDependencies.length >= 50) { // Conservative limit
+					issues.push({
+						type: 'monday_limit',
+						taskId,
+						dependencyId,
+						message: `Task ${taskId} has too many dependencies (${currentDependencies.length}). Monday.com may have limits on board relations.`,
+						source: 'monday'
+					});
+					// Don't mark as invalid, just warn
+				}
+			}
+
+		} catch (error) {
+			issues.push({
+				type: 'monday_error',
+				taskId,
+				dependencyId,
+				message: `Failed to validate Monday.com constraints: ${error.message}`,
+				source: 'monday'
+			});
+			valid = false;
+		}
+
+		return { valid, issues };
+	}
+
+	/**
+	 * Get Monday.com item dependencies from board relation column
+	 * @param {Object} mondayClient - Monday.com API client
+	 * @param {number} itemId - Monday.com item ID
+	 * @param {string} relationColumnId - Board relation column ID
+	 * @returns {Array} Array of dependency item IDs
+	 */
+	static async getMondayItemDependencies(mondayClient, itemId, relationColumnId) {
+		try {
+			const itemDetails = await mondayClient.getItemDetails(itemId, [relationColumnId]);
+			const relationValue = itemDetails.column_values.find(cv => cv.id === relationColumnId);
+			
+			if (!relationValue || !relationValue.value) {
+				return [];
+			}
+			
+			const relationData = JSON.parse(relationValue.value);
+			return relationData.linkedPulseIds || [];
+		} catch (error) {
+			log('warn', `Failed to get Monday.com dependencies for item ${itemId}: ${error.message}`);
+			return [];
+		}
+	}
 }
 
 /**
@@ -561,8 +1177,12 @@ function cleanupSubtaskDependencies(tasksData) {
 /**
  * Validate dependencies in task files
  * @param {string} tasksPath - Path to tasks.json
+ * @param {Object} options - Options object
+ * @param {Object} context - Context object with session, projectRoot, etc.
  */
-async function validateDependenciesCommand(tasksPath, options = {}) {
+async function validateDependenciesCommand(tasksPath, options = {}, context = {}) {
+	const { session, projectRoot } = context;
+	
 	// Only display banner if not in silent mode
 	if (!isSilentMode()) {
 		displayBanner();
@@ -570,10 +1190,13 @@ async function validateDependenciesCommand(tasksPath, options = {}) {
 
 	log('info', 'Checking for invalid dependencies in task files...');
 
-	// Read tasks data
-	const data = readJSON(tasksPath);
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
+
+	// Use persistence manager to read tasks data
+	const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 	if (!data || !data.tasks) {
-		log('error', 'No valid tasks found in tasks.json');
+		log('error', 'No valid tasks found');
 		process.exit(1);
 	}
 
@@ -689,20 +1312,26 @@ function countAllDependencies(tasks) {
  * Fixes invalid dependencies in tasks.json
  * @param {string} tasksPath - Path to tasks.json
  * @param {Object} options - Options object
+ * @param {Object} context - Context object with session, projectRoot, etc.
  */
-async function fixDependenciesCommand(tasksPath, options = {}) {
+async function fixDependenciesCommand(tasksPath, options = {}, context = {}) {
+	const { session, projectRoot } = context;
+	
 	// Only display banner if not in silent mode
 	if (!isSilentMode()) {
 		displayBanner();
 	}
 
-	log('info', 'Checking for and fixing invalid dependencies in tasks.json...');
+	log('info', 'Checking for and fixing invalid dependencies...');
+
+	// Initialize persistence manager with project context
+	await persistenceManager.initialize(projectRoot, session);
 
 	try {
-		// Read tasks data
-		const data = readJSON(tasksPath);
+		// Use persistence manager to read tasks data
+		const data = await persistenceManager.readTasks(tasksPath, { projectRoot, session });
 		if (!data || !data.tasks) {
-			log('error', 'No valid tasks found in tasks.json');
+			log('error', 'No valid tasks found');
 			process.exit(1);
 		}
 
@@ -1014,12 +1643,12 @@ async function fixDependenciesCommand(tasksPath, options = {}) {
 
 		if (dataChanged) {
 			// Save the changes
-			writeJSON(tasksPath, data);
+			await persistenceManager.writeTasks(tasksPath, data, { projectRoot, session });
 			log('success', 'Fixed dependency issues in tasks.json');
 
 			// Regenerate task files
 			log('info', 'Regenerating task files to reflect dependency changes...');
-			await generateTaskFiles(tasksPath, path.dirname(tasksPath));
+			await generateTaskFiles(tasksPath, path.dirname(tasksPath), {}, { session, projectRoot });
 		} else {
 			log('info', 'No changes needed to fix dependencies');
 		}
@@ -1130,9 +1759,10 @@ function ensureAtLeastOneIndependentSubtask(tasksData) {
  * This function is designed to be called after any task modification
  * @param {Object} tasksData - The tasks data object with tasks array
  * @param {string} tasksPath - Optional path to save the changes
+ * @param {Object} context - Optional context object with session, projectRoot, etc.
  * @returns {boolean} - True if any changes were made
  */
-function validateAndFixDependencies(tasksData, tasksPath = null) {
+async function validateAndFixDependencies(tasksData, tasksPath = null, context = {}) {
 	if (!tasksData || !tasksData.tasks || !Array.isArray(tasksData.tasks)) {
 		log('error', 'Invalid tasks data');
 		return false;
@@ -1219,10 +1849,19 @@ function validateAndFixDependencies(tasksData, tasksPath = null) {
 	// Save changes if needed
 	if (tasksPath && changesDetected) {
 		try {
-			writeJSON(tasksPath, tasksData);
-			log('debug', 'Saved dependency fixes to tasks.json');
+			const { session, projectRoot } = context;
+			
+			// If context is provided, use persistence manager, otherwise use direct writeJSON
+			if (session || projectRoot) {
+				await persistenceManager.initialize(projectRoot, session);
+				await persistenceManager.writeTasks(tasksPath, tasksData, { projectRoot, session });
+				log('debug', 'Saved dependency fixes using persistence manager');
+			} else {
+				writeJSON(tasksPath, tasksData);
+				log('debug', 'Saved dependency fixes to tasks.json');
+			}
 		} catch (error) {
-			log('error', 'Failed to save dependency fixes to tasks.json', error);
+			log('error', 'Failed to save dependency fixes', error);
 		}
 	}
 
@@ -1239,5 +1878,6 @@ export {
 	removeDuplicateDependencies,
 	cleanupSubtaskDependencies,
 	ensureAtLeastOneIndependentSubtask,
-	validateAndFixDependencies
+	validateAndFixDependencies,
+	DependencyValidationUtils
 };
