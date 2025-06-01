@@ -62,6 +62,30 @@ const DEFAULTS = {
 		defaultPriority: 'medium',
 		projectName: 'Task Master',
 		ollamaBaseUrl: 'http://localhost:11434/api'
+	},
+	mondayIntegration: {
+		boardId: null, // Required for Monday.com functionality
+		columnMapping: {
+			status: 'status',
+			title: 'name',
+			description: 'notes'
+		},
+		syncSettings: {
+			autoSync: false,
+			syncSubtasks: false
+		}
+	}
+};
+
+const DEFAULT_MONDAY_CONFIG = {
+	boardId: null,
+	columnMapping: {
+		status: 'status',
+		name: 'name',
+		notes: 'notes'
+	},
+	syncSettings: {
+		autoSync: false
 	}
 };
 
@@ -121,7 +145,8 @@ function _loadAndValidateConfig(explicitRoot = null) {
 							? { ...defaults.models.fallback, ...parsedConfig.models.fallback }
 							: { ...defaults.models.fallback }
 				},
-				global: { ...defaults.global, ...parsedConfig?.global }
+				global: { ...defaults.global, ...parsedConfig?.global },
+				mondayIntegration: { ...defaults.mondayIntegration, ...parsedConfig?.mondayIntegration }
 			};
 			configSource = `file (${configPath})`; // Update source info
 
@@ -712,6 +737,156 @@ function getBaseUrlForRole(role, explicitRoot = null) {
 		: undefined;
 }
 
+// --- Monday.com Integration Configuration Functions ---
+
+/**
+ * Gets the Monday.com integration configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Monday.com integration configuration
+ */
+function getMondayIntegrationConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration || DEFAULTS.mondayIntegration;
+}
+
+/**
+ * Gets the Monday.com board ID from configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {string|null} Monday.com board ID or null if not set
+ */
+function getMondayBoardId(explicitRoot = null) {
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	return mondayConfig.boardId;
+}
+
+/**
+ * Gets the Monday.com API token from config or environment variable
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object} session - Session object for MCP context (contains env variables)
+ * @returns {string|null} Monday.com API token or null if not found
+ */
+function getMondayApiToken(explicitRoot = null, session = null) {
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	
+	// Try config first, then environment variable
+	if (mondayConfig.apiToken) {
+		return mondayConfig.apiToken;
+	}
+	
+	// Use session.env for MCP context, otherwise process.env
+	const envVars = session?.env || process.env;
+	return envVars.MONDAY_API_TOKEN || null;
+}
+
+/**
+ * Gets the Monday.com column mapping configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Column mapping configuration
+ */
+function getMondayColumnMapping(explicitRoot = null) {
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	return mondayConfig.columnMapping || DEFAULTS.mondayIntegration.columnMapping;
+}
+
+/**
+ * Gets the Monday.com sync settings configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Sync settings configuration
+ */
+function getMondaySyncSettings(explicitRoot = null) {
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	return mondayConfig.syncSettings || DEFAULTS.mondayIntegration.syncSettings;
+}
+
+/**
+ * Validates the Monday.com configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object} session - Session object for MCP context
+ * @returns {object} Validation result with { valid: boolean, errors: string[] }
+ */
+function validateMondayConfig(explicitRoot = null, session = null) {
+	const errors = [];
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	
+	// Validate board ID
+	if (!mondayConfig.boardId) {
+		errors.push('Monday.com board ID is required. Set it using task-master config monday --board-id=<id>');
+	} else if (typeof mondayConfig.boardId !== 'string') {
+		errors.push('Monday.com board ID must be a string');
+	}
+	
+	// Validate API token availability
+	const apiToken = getMondayApiToken(explicitRoot, session);
+	if (!apiToken) {
+		errors.push('Monday.com API token is required. Set MONDAY_API_TOKEN environment variable or use task-master config monday --token=<token>');
+	}
+	
+	// Validate column mapping
+	const columnMapping = getMondayColumnMapping(explicitRoot);
+	const requiredColumns = ['status', 'title', 'description'];
+	for (const column of requiredColumns) {
+		if (!columnMapping[column] || typeof columnMapping[column] !== 'string') {
+			errors.push(`Monday.com column mapping for '${column}' must be a string`);
+		}
+	}
+	
+	return {
+		valid: errors.length === 0,
+		errors
+	};
+}
+
+/**
+ * Checks if Monday.com integration is configured and ready to use
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object} session - Session object for MCP context
+ * @returns {boolean} True if Monday.com integration is properly configured
+ */
+function isMondayConfigured(explicitRoot = null, session = null) {
+	const validation = validateMondayConfig(explicitRoot, session);
+	return validation.valid;
+}
+
+/**
+ * Updates Monday.com configuration in the config file
+ * @param {object} updates - Object containing configuration updates
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if configuration was updated successfully
+ */
+function updateMondayConfig(updates, explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Ensure mondayIntegration section exists
+	if (!config.mondayIntegration) {
+		config.mondayIntegration = { ...DEFAULTS.mondayIntegration };
+	}
+	
+	// Apply updates with deep merge for nested objects
+	if (updates.boardId !== undefined) {
+		config.mondayIntegration.boardId = updates.boardId;
+	}
+	
+	if (updates.apiToken !== undefined) {
+		config.mondayIntegration.apiToken = updates.apiToken;
+	}
+	
+	if (updates.columnMapping) {
+		config.mondayIntegration.columnMapping = {
+			...config.mondayIntegration.columnMapping,
+			...updates.columnMapping
+		};
+	}
+	
+	if (updates.syncSettings) {
+		config.mondayIntegration.syncSettings = {
+			...config.mondayIntegration.syncSettings,
+			...updates.syncSettings
+		};
+	}
+	
+	return writeConfig(config, explicitRoot);
+}
+
 export {
 	// Core config access
 	getConfig,
@@ -756,5 +931,15 @@ export {
 	getMcpApiKeyStatus,
 
 	// ADD: Function to get all provider names
-	getAllProviders
+	getAllProviders,
+
+	// Monday.com integration functions
+	getMondayIntegrationConfig,
+	getMondayBoardId,
+	getMondayApiToken,
+	getMondayColumnMapping,
+	getMondaySyncSettings,
+	validateMondayConfig,
+	isMondayConfigured,
+	updateMondayConfig
 };

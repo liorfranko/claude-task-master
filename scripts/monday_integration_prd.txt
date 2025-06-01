@@ -104,7 +104,7 @@ task-master sync resolve --conflict-id=X --strategy=local|monday|manual
       "syncSettings": {
         "conflictResolution": "manual|local-wins|monday-wins",
         "syncInterval": 300,
-        "syncSubtasks": false
+        "autoSync": false
       }
     }
   },

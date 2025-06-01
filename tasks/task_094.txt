@@ -1,6 +1,6 @@
 # Task ID: 94
 # Title: Implement CLI Commands for Monday Configuration
-# Status: pending
+# Status: done
 # Dependencies: 93
 # Priority: medium
 # Description: Add CLI commands to configure Monday.com integration settings, including board ID and API token.

@@ -2491,6 +2491,103 @@ Examples:
 			return; // Stop execution here
 		});
 
+	// Monday.com Configuration Command
+	programInstance
+		.command('config-monday')
+		.alias('monday')
+		.description('Configure Monday.com integration settings')
+		.option('--board-id <id>', 'Set Monday.com board ID')
+		.option('--token <token>', 'Set Monday.com API token')
+		.option('--status-column <name>', 'Set status column name (default: status)')
+		.option('--name-column <name>', 'Set name column name (default: name)')
+		.option('--notes-column <name>', 'Set notes column name (default: notes)')
+		.option('--auto-sync', 'Enable automatic sync')
+		.option('--no-auto-sync', 'Disable automatic sync')
+		.option('--show', 'Show current Monday.com configuration')
+		.option('--validate', 'Validate Monday.com configuration and connection')
+		.action(async (options) => {
+			try {
+				const { 
+					getMondayIntegrationConfig, 
+					updateMondayConfig, 
+					validateMondayConfig 
+				} = await import('./config-manager.js');
+
+				// Show current configuration
+				if (options.show) {
+					const config = getMondayIntegrationConfig();
+					console.log('\n📋 Monday.com Configuration:');
+					console.log(`  Board ID: ${config.boardId || 'Not set'}`);
+					console.log(`  API Token: ${config.apiToken ? '***set***' : 'Not set'}`);
+					console.log('\n📊 Column Mapping:');
+					console.log(`  Status: ${config.columnMapping.status}`);
+					console.log(`  Name: ${config.columnMapping.name}`);
+					console.log(`  Notes: ${config.columnMapping.notes}`);
+					console.log('\n⚙️ Sync Settings:');
+					console.log(`  Auto-sync: ${config.syncSettings.autoSync ? 'Enabled' : 'Disabled'}`);
+					return;
+				}
+
+				// Validate configuration
+				if (options.validate) {
+					const validation = await validateMondayConfig();
+					if (validation.isValid) {
+						console.log('✅ Monday.com configuration is valid');
+						console.log(`📋 Connected to board: ${validation.boardId}`);
+					} else {
+						console.error('❌ Monday.com configuration is invalid:');
+						validation.errors.forEach(error => console.error(`  - ${error}`));
+						process.exit(1);
+					}
+					return;
+				}
+
+				// Update configuration
+				const updates = {};
+				
+				if (options.boardId) updates.boardId = options.boardId;
+				if (options.token) updates.apiToken = options.token;
+				
+				// Column mapping updates
+				const columnMapping = {};
+				if (options.statusColumn) columnMapping.status = options.statusColumn;
+				if (options.nameColumn) columnMapping.name = options.nameColumn;
+				if (options.notesColumn) columnMapping.notes = options.notesColumn;
+				if (Object.keys(columnMapping).length > 0) {
+					updates.columnMapping = columnMapping;
+				}
+
+				// Auto-sync setting
+				if (options.autoSync === true) updates.autoSync = true;
+				if (options.autoSync === false) updates.autoSync = false;
+
+				if (Object.keys(updates).length === 0) {
+					console.log('No configuration changes specified. Use --show to view current settings.');
+					return;
+				}
+
+				updateMondayConfig(updates);
+				console.log('✅ Monday.com configuration updated successfully');
+
+				// Show what was updated
+				if (updates.boardId) console.log(`📋 Board ID set to: ${updates.boardId}`);
+				if (updates.apiToken) console.log('🔑 API token updated');
+				if (updates.columnMapping) {
+					console.log('📊 Column mapping updated:');
+					Object.entries(updates.columnMapping).forEach(([key, value]) => {
+						console.log(`  ${key}: ${value}`);
+					});
+				}
+				if (updates.autoSync !== undefined) {
+					console.log(`⚙️ Auto-sync: ${updates.autoSync ? 'Enabled' : 'Disabled'}`);
+				}
+
+			} catch (error) {
+				console.error('❌ Error configuring Monday.com integration:', error.message);
+				process.exit(1);
+			}
+		});
+
 	// move-task command
 	programInstance
 		.command('move')
