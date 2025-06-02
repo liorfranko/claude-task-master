@@ -586,6 +586,32 @@ function displayHelp() {
 					desc: 'Fix invalid dependencies automatically'
 				}
 			]
+		},
+		{
+			title: 'Monday.com Integration',
+			color: 'red', // Using red since it's closest to Monday.com's brand orange
+			commands: [
+				{
+					name: 'config-monday',
+					args: '[--board-id=<id>] [--token=<token>] [--show] [--validate] [--init-board]',
+					desc: 'Configure Monday.com integration settings'
+				},
+				{
+					name: 'sync-monday',
+					args: '[--dry-run] [--task-id=<id>] [--all]',
+					desc: 'Sync tasks to Monday.com board'
+				},
+				{
+					name: 'monday-status',
+					args: '[--detailed] [--summary]',
+					desc: 'Show Monday.com sync status and board information'
+				},
+				{
+					name: 'init-monday-sync',
+					args: '[--force]',
+					desc: 'Initialize Monday.com sync fields for all tasks'
+				}
+			]
 		}
 	];
 
