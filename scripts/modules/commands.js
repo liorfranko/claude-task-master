@@ -50,7 +50,17 @@ import {
 	ConfigurationError,
 	isConfigFilePresent,
 	getAvailableModels,
-	getBaseUrlForRole
+	getBaseUrlForRole,
+	getMondayApiToken,
+	validateMondayConfigWithBoardInfo,
+	getMondayIntegrationConfig,
+	updateMondayConfig,
+	getMondayColumnMapping,
+	getPersistenceConfig,
+	getPersistenceMode,
+	setPersistenceMode,
+	validatePersistenceConfig,
+	migrateMondayIntegrationToPersistence
 } from './config-manager.js';
 
 import {
@@ -66,9 +76,14 @@ import {
 	displayModelConfiguration,
 	displayAvailableModels,
 	displayApiKeyStatus,
-	displayAiUsageSummary
+	displayAiUsageSummary,
+	displayPersistenceConfiguration,
+	displayPersistenceValidation,
+	displayPersistenceModeHelp,
+	displayPersistenceMigration
 } from './ui.js';
 
+import { MondayClient } from './monday-client.js';
 import { initializeProject } from '../init.js';
 import {
 	getModelConfiguration,
@@ -2513,11 +2528,7 @@ Examples:
 		.option('--init-board', 'Initialize Monday.com board by creating missing columns for Task Master integration')
 		.action(async (options) => {
 			try {
-				const { 
-					getMondayIntegrationConfig, 
-					updateMondayConfig, 
-					getMondayColumnMapping
-				} = await import('./config-manager.js');
+
 
 				// Show current configuration
 				if (options.show) {
@@ -2541,8 +2552,6 @@ Examples:
 
 				// Initialize board by creating missing columns
 				if (options.initBoard) {
-					const { getMondayApiToken } = await import('./config-manager.js');
-					const { MondayClient } = await import('./monday-client.js');
 					
 					const config = getMondayIntegrationConfig();
 					
@@ -2668,7 +2677,6 @@ Examples:
 
 				// Validate configuration
 				if (options.validate) {
-					const { validateMondayConfigWithBoardInfo } = await import('./config-manager.js');
 					const validation = await validateMondayConfigWithBoardInfo(null, null, true);
 					
 					if (validation.valid) {
@@ -2758,6 +2766,95 @@ Examples:
 
 			} catch (error) {
 				console.error('❌ Error configuring Monday.com integration:', error.message);
+				process.exit(1);
+			}
+		});
+
+	// Persistence configuration command
+	programInstance
+		.command('config-persistence')
+		.alias('persistence')
+		.description('Configure Task Master persistence mode and settings')
+		.option('--mode <mode>', 'Set persistence mode (local, monday, hybrid)')
+		.option('--show', 'Show current persistence configuration')
+		.option('--validate', 'Validate persistence configuration')
+		.option('--migrate', 'Migrate legacy Monday.com configuration to persistence structure')
+		.action(async (options) => {
+			try {
+
+				// Show current configuration
+				if (options.show) {
+					const config = getPersistenceConfig();
+					const mondayConfig = getMondayIntegrationConfig();
+					displayPersistenceConfiguration(config, mondayConfig);
+					return;
+				}
+
+				// Validate configuration
+				if (options.validate) {
+					console.log('🔍 Validating persistence configuration...');
+					const validation = await validatePersistenceConfig();
+					displayPersistenceValidation(validation);
+					return;
+				}
+
+				// Migrate legacy configuration
+				if (options.migrate) {
+					console.log('🔄 Migrating legacy Monday.com configuration...');
+					const migrated = migrateMondayIntegrationToPersistence();
+					const currentMode = getPersistenceMode();
+					displayPersistenceMigration(migrated, currentMode);
+					return;
+				}
+
+				// Set persistence mode
+				if (options.mode) {
+					const validModes = ['local', 'monday', 'hybrid'];
+					if (!validModes.includes(options.mode)) {
+						console.error(`❌ Invalid persistence mode: ${options.mode}`);
+						console.error(`Valid modes: ${validModes.join(', ')}`);
+						process.exit(1);
+					}
+
+					console.log(`🔄 Setting persistence mode to: ${options.mode}`);
+					const success = setPersistenceMode(options.mode);
+					
+					if (success) {
+						console.log('✅ Persistence mode updated successfully');
+						
+						// Show helpful next steps for Monday.com modes
+						if (options.mode === 'monday' || options.mode === 'hybrid') {
+							console.log('\n💡 Next steps for Monday.com integration:');
+							console.log('1. Configure Monday.com settings: task-master config-monday --board-id <id> --token <token>');
+							console.log('2. Validate the configuration: task-master config-persistence --validate');
+						}
+					} else {
+						console.error('❌ Failed to update persistence mode');
+						process.exit(1);
+					}
+					return;
+				}
+
+				// If no options provided, show help and mode selection guide
+				displayPersistenceModeHelp();
+				console.log('\nUsage: task-master config-persistence [options]');
+				console.log('');
+				console.log('Options:');
+				console.log('  --mode <mode>     Set persistence mode (local, monday, hybrid)');
+				console.log('  --show           Show current persistence configuration');
+				console.log('  --validate       Validate persistence configuration');
+				console.log('  --migrate        Migrate legacy configuration');
+				console.log('');
+				console.log('Examples:');
+				console.log('  task-master config-persistence --mode monday');
+				console.log('  task-master config-persistence --show');
+				console.log('  task-master config-persistence --validate');
+				
+			} catch (error) {
+				console.error('❌ Error managing persistence configuration:', error.message);
+				if (getDebugFlag()) {
+					console.error('Error details:', error);
+				}
 				process.exit(1);
 			}
 		});
@@ -2907,14 +3004,7 @@ Examples:
 					process.exit(1);
 				}
 
-				const { 
-					getMondayIntegrationConfig,
-					getMondayApiToken
-				} = await import('./config-manager.js');
-				
-				const { createMondaySyncEngine } = await import('./monday-sync.js');
-				// Add import for getTasksNeedingSync
-				const { getTasksNeedingSync } = await import('./task-manager/monday-sync-utils.js');
+
 
 				// Check if Monday.com integration is configured
 				const config = getMondayIntegrationConfig(projectRoot);
@@ -3141,12 +3231,7 @@ Examples:
 					process.exit(1);
 				}
 
-				const { 
-					getMondayIntegrationConfig,
-					getMondayApiToken
-				} = await import('./config-manager.js');
-				
-				const { getTasksNeedingSync } = await import('./task-manager/monday-sync-utils.js');
+
 
 				// Check if Monday.com integration is configured
 				const config = getMondayIntegrationConfig(projectRoot);
@@ -3310,11 +3395,7 @@ Examples:
 					process.exit(1);
 				}
 
-				const { 
-					getMondayIntegrationConfig
-				} = await import('./config-manager.js');
-				
-				const { initializeMondayFieldsForAllTasks } = await import('./task-manager/monday-sync-utils.js');
+
 
 				// Check if Monday.com integration is configured
 				const config = getMondayIntegrationConfig(projectRoot);
@@ -3370,8 +3451,7 @@ Examples:
 
 				// Confirmation prompt (unless --yes flag is used)
 				if (!options.yes) {
-					const inquirer = await import('inquirer');
-					const { confirmInit } = await inquirer.default.prompt([
+					const { confirmInit } = await inquirer.prompt([
 						{
 							type: 'confirm',
 							name: 'confirmInit',
@@ -3414,8 +3494,6 @@ Examples:
 				process.exit(1);
 			}
 		});
-
-	// Performance Monitoring Commands
 
 	return programInstance;
 }

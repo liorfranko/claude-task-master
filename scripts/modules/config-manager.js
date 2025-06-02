@@ -63,8 +63,12 @@ const DEFAULTS = {
 		projectName: 'Task Master',
 		ollamaBaseUrl: 'http://localhost:11434/api'
 	},
+	persistence: {
+		mode: 'local' // 'local', 'monday', or 'hybrid'
+	},
 	mondayIntegration: {
 		boardId: null, // Required for Monday.com functionality
+		apiToken: null, // Can be direct token or env:MONDAY_API_TOKEN
 		columnMapping: {
 			status: 'status',
 			title: 'name',
@@ -76,7 +80,9 @@ const DEFAULTS = {
 			dependencies: 'task_dependencies'
 		},
 		syncSettings: {
-			autoSync: false		}
+			conflictResolution: 'manual', // 'manual', 'local-wins', or 'monday-wins'
+			autoSync: false
+		}
 	}
 };
 
@@ -137,7 +143,21 @@ function _loadAndValidateConfig(explicitRoot = null) {
 							: { ...defaults.models.fallback }
 				},
 				global: { ...defaults.global, ...parsedConfig?.global },
-				mondayIntegration: { ...defaults.mondayIntegration, ...parsedConfig?.mondayIntegration }
+				persistence: {
+					mode: parsedConfig?.persistence?.mode || defaults.persistence.mode
+				},
+				mondayIntegration: {
+					boardId: parsedConfig?.mondayIntegration?.boardId || defaults.mondayIntegration.boardId,
+					apiToken: parsedConfig?.mondayIntegration?.apiToken || defaults.mondayIntegration.apiToken,
+					columnMapping: {
+						...defaults.mondayIntegration.columnMapping,
+						...parsedConfig?.mondayIntegration?.columnMapping
+					},
+					syncSettings: {
+						...defaults.mondayIntegration.syncSettings,
+						...parsedConfig?.mondayIntegration?.syncSettings
+					}
+				}
 			};
 			configSource = `file (${configPath})`; // Update source info
 
@@ -908,6 +928,281 @@ function updateMondayConfig(updates, explicitRoot = null) {
 	return writeConfig(config, explicitRoot);
 }
 
+/**
+ * Gets the persistence configuration from the config file
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Persistence configuration object
+ */
+function getPersistenceConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.persistence || DEFAULTS.persistence;
+}
+
+/**
+ * Gets the current persistence mode from configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {string} Current persistence mode ('local', 'monday', or 'hybrid')
+ */
+function getPersistenceMode(explicitRoot = null) {
+	const persistenceConfig = getPersistenceConfig(explicitRoot);
+	return persistenceConfig.mode || DEFAULTS.persistence.mode;
+}
+
+/**
+ * Get persistence Monday.com configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Monday.com configuration for persistence
+ */
+function getPersistenceMondayConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration || {};
+}
+
+/**
+ * Get persistence Monday.com API token
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object|null} session - Optional session object (for MCP context)
+ * @returns {string|null} Monday.com API token
+ */
+function getPersistenceMondayApiToken(explicitRoot = null, session = null) {
+	const config = getConfig(explicitRoot);
+	const token = config.mondayIntegration?.apiToken;
+	
+	if (!token) {
+		return null;
+	}
+	
+	// Handle environment variable references
+	if (typeof token === 'string' && token.startsWith('env:')) {
+		const envVarName = token.substring(4); // Remove 'env:' prefix
+		return resolveEnvVariable(envVarName, session);
+	}
+	
+	return token;
+}
+
+/**
+ * Get persistence Monday.com board ID
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {string|null} Monday.com board ID
+ */
+function getPersistenceMondayBoardId(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration?.boardId || null;
+}
+
+/**
+ * Get persistence Monday.com column mapping
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Monday.com column mapping
+ */
+function getPersistenceMondayColumnMapping(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration?.columnMapping || {};
+}
+
+/**
+ * Get persistence Monday.com sync settings
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Monday.com sync settings
+ */
+function getPersistenceMondaySyncSettings(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration?.syncSettings || {};
+}
+
+/**
+ * Sets the persistence mode in the configuration
+ * @param {string} mode - The persistence mode to set ('local', 'monday', or 'hybrid')
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if configuration was updated successfully
+ */
+function setPersistenceMode(mode, explicitRoot = null) {
+	const validModes = ['local', 'monday', 'hybrid'];
+	if (!validModes.includes(mode)) {
+		throw new ConfigurationError(`Invalid persistence mode: ${mode}. Must be one of: ${validModes.join(', ')}`);
+	}
+
+	const config = getConfig(explicitRoot);
+	
+	// Ensure persistence section exists
+	if (!config.persistence) {
+		config.persistence = { ...DEFAULTS.persistence };
+	}
+	
+	config.persistence.mode = mode;
+	return writeConfig(config, explicitRoot);
+}
+
+/**
+ * Updates persistence configuration in the config file
+ * @param {object} updates - Object containing configuration updates
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if configuration was updated successfully
+ */
+function updatePersistenceConfig(updates, explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Ensure persistence section exists
+	if (!config.persistence) {
+		config.persistence = { ...DEFAULTS.persistence };
+	}
+	
+	// Ensure mondayIntegration section exists
+	if (!config.mondayIntegration) {
+		config.mondayIntegration = { ...DEFAULTS.mondayIntegration };
+	}
+	
+	// Apply updates with deep merge for nested objects
+	if (updates.mode !== undefined) {
+		config.persistence.mode = updates.mode;
+	}
+	
+	// Handle Monday.com configuration updates
+	if (updates.mondayConfig || updates.boardId !== undefined || updates.apiToken !== undefined || 
+	    updates.columnMapping || updates.syncSettings) {
+		
+		if (updates.boardId !== undefined) {
+			config.mondayIntegration.boardId = updates.boardId;
+		}
+		
+		if (updates.apiToken !== undefined) {
+			config.mondayIntegration.apiToken = updates.apiToken;
+		}
+		
+		if (updates.columnMapping) {
+			config.mondayIntegration.columnMapping = {
+				...config.mondayIntegration.columnMapping,
+				...updates.columnMapping
+			};
+		}
+		
+		if (updates.syncSettings) {
+			config.mondayIntegration.syncSettings = {
+				...config.mondayIntegration.syncSettings,
+				...updates.syncSettings
+			};
+		}
+		
+		// Handle legacy mondayConfig updates
+		if (updates.mondayConfig) {
+			if (updates.mondayConfig.boardId !== undefined) {
+				config.mondayIntegration.boardId = updates.mondayConfig.boardId;
+			}
+			if (updates.mondayConfig.apiToken !== undefined) {
+				config.mondayIntegration.apiToken = updates.mondayConfig.apiToken;
+			}
+			if (updates.mondayConfig.columnMapping) {
+				config.mondayIntegration.columnMapping = {
+					...config.mondayIntegration.columnMapping,
+					...updates.mondayConfig.columnMapping
+				};
+			}
+			if (updates.mondayConfig.syncSettings) {
+				config.mondayIntegration.syncSettings = {
+					...config.mondayIntegration.syncSettings,
+					...updates.mondayConfig.syncSettings
+				};
+			}
+		}
+	}
+	
+	// Write the updated configuration
+	return writeConfig(config, explicitRoot);
+}
+
+/**
+ * Validates persistence configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object|null} session - Optional session object (for MCP context)
+ * @returns {Promise<object>} Validation result with isValid boolean and issues array
+ */
+async function validatePersistenceConfig(explicitRoot = null, session = null) {
+	const result = {
+		isValid: true,
+		issues: []
+	};
+	
+	const config = getConfig(explicitRoot);
+	const mode = config.persistence?.mode;
+	
+	// Validate persistence mode
+	const validModes = ['local', 'monday', 'hybrid'];
+	if (!mode || !validModes.includes(mode)) {
+		result.isValid = false;
+		result.issues.push(`Invalid persistence mode: ${mode}. Must be one of: ${validModes.join(', ')}`);
+		return result;
+	}
+	
+	// For monday or hybrid mode, validate Monday.com configuration
+	if (mode === 'monday' || mode === 'hybrid') {
+		const mondayConfig = config.mondayIntegration;
+		
+		if (!mondayConfig) {
+			result.isValid = false;
+			result.issues.push('Monday.com integration configuration is missing');
+			return result;
+		}
+		
+		// Check for required board ID
+		if (!mondayConfig.boardId) {
+			result.isValid = false;
+			result.issues.push('Monday.com board ID is required for persistence mode');
+		}
+		
+		// Check for API token (either direct or environment variable)
+		const apiToken = getPersistenceMondayApiToken(explicitRoot, session);
+		if (!apiToken) {
+			result.isValid = false;
+			result.issues.push('Monday.com API token is required but not found (check configuration and environment variables)');
+		}
+		
+		// Validate column mapping
+		if (!mondayConfig.columnMapping || Object.keys(mondayConfig.columnMapping).length === 0) {
+			result.isValid = false;
+			result.issues.push('Monday.com column mapping is required but missing');
+		}
+		
+		// Validate sync settings
+		if (mondayConfig.syncSettings) {
+			const { conflictResolution } = mondayConfig.syncSettings;
+			const validResolutions = ['manual', 'local-wins', 'monday-wins'];
+			
+			if (conflictResolution && !validResolutions.includes(conflictResolution)) {
+				result.isValid = false;
+				result.issues.push(`Invalid conflict resolution: ${conflictResolution}. Must be one of: ${validResolutions.join(', ')}`);
+			}
+		}
+	}
+	
+	return result;
+}
+
+/**
+ * Migrates legacy Monday.com integration configuration to persistence configuration
+ * This function ensures backward compatibility for existing configurations
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if migration was performed, false if no migration needed
+ */
+function migrateMondayIntegrationToPersistence(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Check if persistence section exists and has proper structure
+	if (!config.persistence) {
+		config.persistence = { mode: 'local' };
+		return writeConfig(config, explicitRoot);
+	}
+	
+	// Check if mondayIntegration section exists and is properly structured
+	if (!config.mondayIntegration) {
+		config.mondayIntegration = { ...DEFAULTS.mondayIntegration };
+		return writeConfig(config, explicitRoot);
+	}
+	
+	// No migration needed if both sections exist with proper structure
+	return false;
+}
+
 export {
 	// Core config access
 	getConfig,
@@ -961,5 +1256,18 @@ export {
 	getMondayColumnMapping,
 	getMondaySyncSettings,
 	validateMondayConfigWithBoardInfo,
-	updateMondayConfig
+	updateMondayConfig,
+
+	// Persistence functions
+	getPersistenceConfig,
+	getPersistenceMode,
+	getPersistenceMondayConfig,
+	getPersistenceMondayApiToken,
+	getPersistenceMondayBoardId,
+	getPersistenceMondayColumnMapping,
+	getPersistenceMondaySyncSettings,
+	setPersistenceMode,
+	updatePersistenceConfig,
+	validatePersistenceConfig,
+	migrateMondayIntegrationToPersistence
 };
