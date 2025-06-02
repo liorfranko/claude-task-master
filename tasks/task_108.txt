@@ -1,7 +1,7 @@
 # Task ID: 108
 # Title: Implement Monday Storage Provider
 # Status: pending
-# Dependencies: 104, 106, 107
+# Dependencies: 104, 107
 # Priority: medium
 # Description: Create a Monday.com storage provider that implements the persistence manager interface for Monday-only mode.
 # Details:

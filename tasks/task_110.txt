@@ -1,7 +1,7 @@
 # Task ID: 110
 # Title: Implement Sync Engine for Hybrid Mode
 # Status: pending
-# Dependencies: 105, 108, 109
+# Dependencies: 108
 # Priority: medium
 # Description: Create a synchronization engine that handles bidirectional sync between local storage and Monday.com in hybrid mode.
 # Details:

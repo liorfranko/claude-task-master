@@ -1,7 +1,7 @@
 # Task ID: 111
 # Title: Implement Hybrid Storage Provider
 # Status: pending
-# Dependencies: 105, 108, 110
+# Dependencies: 108, 110
 # Priority: medium
 # Description: Create a hybrid storage provider that implements the persistence manager interface for hybrid mode, writing to both local storage and Monday.com.
 # Details:

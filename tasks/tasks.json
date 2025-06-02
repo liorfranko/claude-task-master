@@ -6218,33 +6218,7 @@
       "testStrategy": "1. Unit tests for the persistence manager class with mock providers  \n2. Test provider registration and switching  \n3. Test CRUD operations with mock providers  \n4. Test error handling with failing providers  \n5. Integration test with the actual local storage provider  \n6. Verify backward compatibility with existing task operations",
       "priority": "high",
       "dependencies": [],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
-    },
-    {
-      "id": 105,
-      "title": "Enhance Local Storage Engine",
-      "description": "Refactor the existing local storage functionality into a dedicated provider that implements the persistence manager interface.",
-      "details": "Create `scripts/modules/local-storage.js` that:  \n1. Implements the persistence manager interface  \n2. Refactors existing task file operations into the provider  \n3. Adds caching for performance optimization  \n4. Implements proper error handling and recovery  \n5. Adds transaction support for atomic operations  \n6. Includes file locking mechanism to prevent concurrent writes  \n\nCode structure:  \n```javascript\nconst fs = require('fs').promises;\nconst path = require('path');\nconst lockfile = require('proper-lockfile');\n\nclass LocalStorageProvider {\n  constructor(config) {\n    this.tasksFile = config.tasksFile || path.join(process.cwd(), 'tasks.json');\n    this.cache = null;\n  }\n\n  async getTasks() {\n    if (this.cache) return this.cache;\n    \n    try {\n      const data = await fs.readFile(this.tasksFile, 'utf8');\n      this.cache = JSON.parse(data);\n      return this.cache;\n    } catch (error) {\n      if (error.code === 'ENOENT') {\n        // File doesn't exist, return empty array\n        this.cache = [];\n        return [];\n      }\n      throw error;\n    }\n  }\n\n  // Implement other CRUD methods with proper locking\n}\n\nmodule.exports = LocalStorageProvider;\n```\n\nRegister with persistence manager:  \n```javascript\nconst persistenceManager = require('./persistence-manager');\nconst LocalStorageProvider = require('./local-storage');\n\npersistenceManager.registerProvider('local', new LocalStorageProvider(require('../config').getConfig()));\n```",
-      "testStrategy": "1. Unit tests for all CRUD operations  \n2. Test file creation if not exists  \n3. Test error handling for file system errors  \n4. Test caching mechanism  \n5. Test file locking with concurrent operations  \n6. Verify backward compatibility with existing task operations  \n7. Performance tests for large task sets",
-      "priority": "high",
-      "dependencies": [
-        104
-      ],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
-    },
-    {
-      "id": 106,
-      "title": "Implement Monday.com API Client",
-      "description": "Create a lightweight GraphQL client for Monday.com API interactions that handles authentication, rate limiting, and core board operations.",
-      "details": "Create `scripts/modules/monday-client.js` that:  \n1. Uses `graphql-request` v5.1.0 for API interactions  \n2. Implements authentication with Personal Access Token  \n3. Adds rate limiting (10 requests per second)  \n4. Implements retry logic for failed requests  \n5. Creates methods for board operations: `getBoard`, `getItems`, `createItem`, `updateItem`, `deleteItem`  \n6. Adds error handling and logging  \n\nInstall dependencies:  \n```bash\nnpm install graphql-request graphql p-throttle\n```\n\nCode structure:  \n```javascript\nconst { GraphQLClient } = require('graphql-request');\nconst pThrottle = require('p-throttle');\n\nclass MondayClient {\n  constructor(config) {\n    this.apiToken = process.env.MONDAY_API_TOKEN || config.persistence?.mondayConfig?.apiToken;\n    this.boardId = config.persistence?.mondayConfig?.boardId;\n    \n    // Initialize GraphQL client\n    this.client = new GraphQLClient('https://api.monday.com/v2', {\n      headers: {\n        'Authorization': this.apiToken,\n        'Content-Type': 'application/json'\n      }\n    });\n    \n    // Rate limiting: 10 requests per second\n    this.throttle = pThrottle({\n      limit: 10,\n      interval: 1000\n    });\n    \n    // Throttled request method\n    this.request = this.throttle(async (query, variables) => {\n      try {\n        return await this.client.request(query, variables);\n      } catch (error) {\n        // Handle rate limiting errors with exponential backoff\n        if (error.response?.status === 429) {\n          const retryAfter = parseInt(error.response.headers['retry-after'] || '2');\n          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));\n          return this.client.request(query, variables);\n        }\n        throw error;\n      }\n    });\n  }\n\n  async testConnection() {\n    const query = `query { me { name } }`;\n    return this.request(query);\n  }\n\n  async getBoard(boardId = this.boardId) {\n    const query = `\n      query($boardId: [Int]) {\n        boards(ids: $boardId) {\n          id\n          name\n          columns {\n            id\n            title\n            type\n          }\n        }\n      }\n    `;\n    return this.request(query, { boardId: parseInt(boardId) });\n  }\n\n  // Implement other board operations\n}\n\nmodule.exports = new MondayClient(require('../config').getConfig());\n```",
-      "testStrategy": "1. Unit tests with mocked API responses  \n2. Test authentication with valid and invalid tokens  \n3. Test rate limiting with rapid requests  \n4. Test retry logic with simulated 429 responses  \n5. Integration test with real Monday.com API using test board 9275265350  \n6. Test all board operations: get, create, update, delete  \n7. Test error handling with various API error scenarios",
-      "priority": "high",
-      "dependencies": [],
-      "status": "pending",
+      "status": "in-progress",
       "subtasks": [],
       "syncStatus": "pending"
     },
@@ -6256,8 +6230,7 @@
       "testStrategy": "1. Unit tests for configuration schema validation  \n2. Test setting and retrieving different persistence modes  \n3. Test environment variable resolution  \n4. Test CLI commands for configuration management  \n5. Test configuration migration from older versions  \n6. Test validation of Monday.com board settings  \n7. Test error handling for invalid configurations",
       "priority": "high",
       "dependencies": [
-        104,
-        106
+        104
       ],
       "status": "pending",
       "subtasks": [],
@@ -6272,23 +6245,7 @@
       "priority": "medium",
       "dependencies": [
         104,
-        106,
         107
-      ],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
-    },
-    {
-      "id": 109,
-      "title": "Implement Manual Sync Commands",
-      "description": "Create CLI commands for manual synchronization between local storage and Monday.com board.",
-      "details": "Add new CLI commands to `commands.js`:  \n1. `update-monday-from-local`: Push local tasks to Monday.com  \n2. `update-local-from-monday`: Pull Monday.com items to local tasks  \n3. `sync status`: Show sync status and statistics  \n4. `sync conflicts`: List sync conflicts  \n5. `sync resolve`: Resolve specific conflicts  \n\nImplementation details:  \n```javascript\nconst persistenceManager = require('./modules/persistence-manager');\nconst mondayClient = require('./modules/monday-client');\nconst localProvider = persistenceManager.providers['local'];\nconst mondayProvider = persistenceManager.providers['monday'];\n\nasync function updateMondayFromLocal(args) {\n  const dryRun = args['dry-run'] || false;\n  const taskId = args['task-id'];\n  const force = args['force'] || false;\n  \n  console.log('Pushing local tasks to Monday.com...');\n  \n  // Get local tasks\n  const localTasks = await localProvider.getTasks();\n  \n  // Filter by task ID if specified\n  const tasksToSync = taskId ? localTasks.filter(t => t.id === parseInt(taskId)) : localTasks;\n  \n  if (tasksToSync.length === 0) {\n    console.log('No tasks to sync.');\n    return;\n  }\n  \n  console.log(`Found ${tasksToSync.length} tasks to sync${dryRun ? ' (DRY RUN)' : ''}`);\n  \n  // Get existing Monday items for conflict detection\n  let mondayItems = [];\n  try {\n    mondayItems = await mondayProvider.getTasks();\n  } catch (error) {\n    console.error('Error fetching Monday items:', error.message);\n    if (!force) {\n      console.error('Use --force to continue anyway.');\n      return;\n    }\n  }\n  \n  // Create a map of Monday items by ID for quick lookup\n  const mondayItemsMap = {};\n  mondayItems.forEach(item => {\n    if (item.id) {\n      mondayItemsMap[item.id] = item;\n    }\n  });\n  \n  // Process each task\n  const results = {\n    created: 0,\n    updated: 0,\n    failed: 0,\n    skipped: 0\n  };\n  \n  for (const task of tasksToSync) {\n    try {\n      // Check if task exists in Monday\n      if (task.mondayItemId && mondayItemsMap[task.id]) {\n        // Update existing item\n        if (!dryRun) {\n          await mondayProvider.updateTask(task.id, task);\n        }\n        console.log(`Updated task ${task.id} in Monday.com`);\n        results.updated++;\n      } else {\n        // Create new item\n        if (!dryRun) {\n          const newTask = await mondayProvider.createTask(task);\n          // Update local task with Monday item ID\n          await localProvider.updateTask(task.id, {\n            ...task,\n            mondayItemId: newTask.mondayItemId,\n            lastSyncedAt: new Date().toISOString(),\n            syncStatus: 'synced'\n          });\n        }\n        console.log(`Created task ${task.id} in Monday.com`);\n        results.created++;\n      }\n    } catch (error) {\n      console.error(`Error syncing task ${task.id}:`, error.message);\n      results.failed++;\n    }\n  }\n  \n  console.log('\\nSync results:');\n  console.log(`- Created: ${results.created}`);\n  console.log(`- Updated: ${results.updated}`);\n  console.log(`- Failed: ${results.failed}`);\n  console.log(`- Skipped: ${results.skipped}`);\n}\n\n// Implement other sync commands similarly\n```\n\nRegister commands:  \n```javascript\nmodule.exports = {\n  // Existing commands\n  'update-monday-from-local': updateMondayFromLocal,\n  'update-local-from-monday': updateLocalFromMonday,\n  'sync': {\n    'status': syncStatus,\n    'conflicts': syncConflicts,\n    'resolve': syncResolve\n  }\n};\n```",
-      "testStrategy": "1. Test each sync command with mock providers  \n2. Test with real Monday.com API using test board 9275265350  \n3. Test dry-run mode to ensure no changes are made  \n4. Test error handling with API failures  \n5. Test conflict detection and reporting  \n6. Test with various command line arguments  \n7. Test performance with large task sets",
-      "priority": "medium",
-      "dependencies": [
-        105,
-        108
       ],
       "status": "pending",
       "subtasks": [],
@@ -6302,9 +6259,7 @@
       "testStrategy": "1. Unit tests for sync logic with mock providers  \n2. Test conflict detection with various scenarios  \n3. Test different conflict resolution strategies  \n4. Test partial sync failures and recovery  \n5. Test with real Monday.com API using test board 9275265350  \n6. Test performance with large task sets and many conflicts  \n7. Test edge cases like deleted tasks in one system",
       "priority": "medium",
       "dependencies": [
-        105,
-        108,
-        109
+        108
       ],
       "status": "pending",
       "subtasks": [],
@@ -6318,25 +6273,8 @@
       "testStrategy": "1. Unit tests with mock providers  \n2. Test all CRUD operations in hybrid mode  \n3. Test offline behavior when Monday.com is unavailable  \n4. Test conflict detection and resolution  \n5. Test with real Monday.com API using test board 9275265350  \n6. Test performance with large task sets  \n7. Test recovery from partial failures",
       "priority": "medium",
       "dependencies": [
-        105,
         108,
         110
-      ],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
-    },
-    {
-      "id": 112,
-      "title": "Implement Mode Migration Tools",
-      "description": "Create tools to migrate tasks between different persistence modes without data loss.",
-      "details": "Create migration tools that:  \n1. Safely migrate tasks between different persistence modes  \n2. Validate data before migration  \n3. Support rollback in case of failure  \n4. Handle dependency mapping between systems  \n5. Provide progress reporting  \n\nImplementation:  \n```javascript\nconst persistenceManager = require('./modules/persistence-manager');\n\nasync function migrateMode(args) {\n  const fromMode = args.from;\n  const toMode = args.to;\n  const dryRun = args['dry-run'] || false;\n  \n  if (!['local', 'monday', 'hybrid'].includes(fromMode) || \n      !['local', 'monday', 'hybrid'].includes(toMode)) {\n    console.error('Invalid mode. Must be one of: local, monday, hybrid');\n    return;\n  }\n  \n  if (fromMode === toMode) {\n    console.log(`Already in ${fromMode} mode. No migration needed.`);\n    return;\n  }\n  \n  console.log(`Migrating from ${fromMode} to ${toMode} mode${dryRun ? ' (DRY RUN)' : ''}...`);\n  \n  // Get source provider\n  const sourceProvider = persistenceManager.providers[fromMode];\n  if (!sourceProvider) {\n    console.error(`Source provider for ${fromMode} mode not found.`);\n    return;\n  }\n  \n  // Get target provider\n  const targetProvider = persistenceManager.providers[toMode];\n  if (!targetProvider) {\n    console.error(`Target provider for ${toMode} mode not found.`);\n    return;\n  }\n  \n  // Get tasks from source\n  const tasks = await sourceProvider.getTasks();\n  console.log(`Found ${tasks.length} tasks to migrate.`);\n  \n  if (tasks.length === 0) {\n    console.log('No tasks to migrate.');\n    return;\n  }\n  \n  // Create backup\n  const backupPath = await createBackup(fromMode);\n  console.log(`Created backup at ${backupPath}`);\n  \n  // Track results\n  const results = {\n    migrated: 0,\n    failed: 0,\n    skipped: 0\n  };\n  \n  // Migrate each task\n  for (const task of tasks) {\n    try {\n      console.log(`Migrating task ${task.id}: ${task.title}...`);\n      \n      if (!dryRun) {\n        // Special handling for different mode combinations\n        if (fromMode === 'local' && toMode === 'monday') {\n          // Local to Monday: Create in Monday\n          const mondayTask = await targetProvider.createTask(task);\n          results.migrated++;\n        } else if (fromMode === 'monday' && toMode === 'local') {\n          // Monday to Local: Create in Local without Monday ID\n          const localTask = {\n            ...task,\n            mondayItemId: null,\n            syncStatus: null,\n            lastSyncedAt: null\n          };\n          await targetProvider.createTask(localTask);\n          results.migrated++;\n        } else if (fromMode === 'local' && toMode === 'hybrid') {\n          // Local to Hybrid: Create in Monday and update local\n          const hybridTask = await targetProvider.createTask(task);\n          results.migrated++;\n        } else if (fromMode === 'monday' && toMode === 'hybrid') {\n          // Monday to Hybrid: Create in local with Monday ID\n          const hybridTask = await targetProvider.createTask(task);\n          results.migrated++;\n        } else if (fromMode === 'hybrid') {\n          // From Hybrid: Just create in target\n          await targetProvider.createTask(task);\n          results.migrated++;\n        }\n      } else {\n        console.log(`Would migrate task ${task.id} (dry run)`);\n        results.migrated++;\n      }\n    } catch (error) {\n      console.error(`Error migrating task ${task.id}:`, error.message);\n      results.failed++;\n    }\n  }\n  \n  // Update config if not dry run\n  if (!dryRun) {\n    const config = require('../config').getConfig();\n    config.persistence = config.persistence || {};\n    config.persistence.mode = toMode;\n    require('../config').saveConfig(config);\n    console.log(`Updated configuration to ${toMode} mode.`);\n  }\n  \n  console.log('\\nMigration results:');\n  console.log(`- Migrated: ${results.migrated}`);\n  console.log(`- Failed: ${results.failed}`);\n  console.log(`- Skipped: ${results.skipped}`);\n  \n  if (results.failed > 0) {\n    console.log(`\\nSome tasks failed to migrate. Backup is available at ${backupPath}`);\n  }\n}\n\nasync function createBackup(mode) {\n  const fs = require('fs').promises;\n  const path = require('path');\n  const provider = persistenceManager.providers[mode];\n  const tasks = await provider.getTasks();\n  \n  const backupDir = path.join(process.cwd(), 'backups');\n  await fs.mkdir(backupDir, { recursive: true });\n  \n  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');\n  const backupPath = path.join(backupDir, `tasks-${mode}-${timestamp}.json`);\n  \n  await fs.writeFile(backupPath, JSON.stringify(tasks, null, 2));\n  return backupPath;\n}\n```\n\nRegister command:  \n```javascript\nmodule.exports = {\n  // Existing commands\n  'migrate': migrateMode\n};\n```",
-      "testStrategy": "1. Test migration between all mode combinations  \n2. Test with dry-run mode to ensure no changes are made  \n3. Test backup and restore functionality  \n4. Test error handling and rollback  \n5. Test with real Monday.com API using test board 9275265350  \n6. Test with large task sets  \n7. Test edge cases like empty task lists or invalid configurations",
-      "priority": "medium",
-      "dependencies": [
-        105,
-        108,
-        111
       ],
       "status": "pending",
       "subtasks": [],
@@ -6381,25 +6319,12 @@
       "testStrategy": "1. Run unit tests for all components with mock providers  \n2. Run integration tests with real Monday.com API using test board 9275265350  \n3. Run end-to-end tests for all CLI commands and modes  \n4. Test offline scenarios by disconnecting from the network  \n5. Test conflict scenarios by modifying the same task in both systems  \n6. Test performance with large task sets  \n7. Test error handling and recovery from various failure scenarios",
       "priority": "medium",
       "dependencies": [
-        105,
         108,
         110,
         111,
         114,
         116
       ],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
-    },
-    {
-      "id": 121,
-      "title": "Implement local storage engine enhancements",
-      "description": "Enhance the local storage engine to support Monday.com integration by adding sync-related fields to the task schema and implementing methods for tracking sync status.",
-      "details": "1. Create `scripts/modules/local-storage.js` as an enhanced version of the current task storage\n2. Extend the task schema to include Monday-specific fields:\n   - `mondayItemId`: ID of the corresponding Monday.com item\n   - `lastSyncedAt`: Timestamp of the last successful sync\n   - `syncStatus`: Current sync status (synced, pending, conflict, error)\n   - `lastModifiedLocal`: Timestamp of the last local modification\n   - `lastModifiedMonday`: Timestamp of the last Monday modification\n3. Implement methods to update sync-related fields\n4. Add support for querying tasks by sync status\n5. Implement methods to handle sync conflicts\n6. Ensure backward compatibility with existing task data\n\nEnhanced task schema:\n```javascript\n{\n  \"id\": 1,\n  \"title\": \"Task Title\",\n  \"description\": \"Task description\",\n  \"status\": \"pending|in-progress|done\",\n  \"priority\": \"high|medium|low\",\n  // Monday.com specific fields\n  \"mondayItemId\": \"12345678\",\n  \"lastSyncedAt\": \"2025-01-20T10:00:00Z\",\n  \"syncStatus\": \"synced|pending|conflict|error\",\n  \"lastModifiedLocal\": \"2025-01-20T10:00:00Z\",\n  \"lastModifiedMonday\": \"2025-01-20T09:55:00Z\"\n}\n```\n\nImplement methods:\n```javascript\nclass LocalStorageEngine {\n  constructor() {\n    this.tasksFile = 'tasks.json';\n  }\n\n  loadTasks() {\n    // Load tasks from file\n  }\n\n  saveTasks(tasks) {\n    // Save tasks to file\n  }\n\n  getTaskById(id) {\n    // Get task by ID\n  }\n\n  updateTask(task) {\n    // Update task and set lastModifiedLocal\n  }\n\n  updateSyncStatus(taskId, status, mondayItemId = null) {\n    // Update sync status and related fields\n  }\n\n  getTasksByStatus(status) {\n    // Get tasks by status\n  }\n\n  getTasksBySyncStatus(syncStatus) {\n    // Get tasks by sync status\n  }\n\n  markTaskAsSynced(taskId, mondayItemId) {\n    // Mark task as synced with Monday\n  }\n\n  markTaskAsConflict(taskId, mondayData) {\n    // Mark task as having a conflict\n  }\n}\n```",
-      "testStrategy": "1. Unit test the LocalStorageEngine class with sample task data\n2. Test loading and saving tasks with Monday-specific fields\n3. Verify backward compatibility with existing task data\n4. Test sync status update methods\n5. Test querying tasks by sync status\n6. Verify conflict marking and resolution\n7. Test timestamp handling for modifications\n8. Ensure proper error handling for file operations",
-      "priority": "medium",
-      "dependencies": [],
       "status": "pending",
       "subtasks": [],
       "syncStatus": "pending"
@@ -6425,20 +6350,6 @@
       "priority": "high",
       "dependencies": [
         123
-      ],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
-    },
-    {
-      "id": 126,
-      "title": "Add CLI commands for pull-from-Monday operations",
-      "description": "Implement CLI commands for pulling Monday.com items to local tasks, including options for dry run, force sync, and specific item IDs.",
-      "details": "1. Add `update-local-from-monday` command to `commands.js`\n2. Implement command handler that uses the Monday sync engine\n3. Support options: `--task-id=X`, `--dry-run`, `--force`\n4. Add progress reporting and error handling\n5. Implement command help and documentation\n6. Add conflict reporting and resolution options\n\nImplementation details:\n```javascript\n// In commands.js\n// Add to commands object\nconst commands = {\n  // ... existing commands\n  'update-local-from-monday': updateLocalFromMonday\n};\n\nasync function updateLocalFromMonday(args) {\n  const options = {\n    mondayItemId: args['--item-id'],\n    dryRun: args['--dry-run'] === true,\n    force: args['--force'] === true\n  };\n  \n  console.log('Pulling tasks from Monday.com...');\n  \n  if (options.dryRun) {\n    console.log('DRY RUN: No changes will be made to local tasks');\n  }\n  \n  if (options.mondayItemId) {\n    console.log(`Pulling Monday item ID: ${options.mondayItemId}`);\n  } else {\n    console.log('Pulling all items from configured Monday board');\n  }\n  \n  try {\n    const results = await mondaySyncEngine.pullAllTasksFromMonday(options);\n    \n    console.log('\\nSync Results:');\n    for (const result of results) {\n      if (result.success) {\n        if (result.dryRun) {\n          console.log(`ℹ️ Monday item ${result.mondayItemId}: Would ${result.isNewTask ? 'create new task' : 'update task'} (dry run)`);\n        } else {\n          console.log(`✅ Monday item ${result.mondayItemId}: ${result.isNewTask ? 'Created new task' : 'Updated task'} ${result.taskId}`);\n        }\n      } else if (result.conflict) {\n        console.log(`⚠️ Monday item ${result.mondayItemId}: Conflict detected - local changes exist`);\n      } else {\n        console.log(`❌ Monday item ${result.mondayItemId}: Failed to sync - ${result.error}`);\n      }\n    }\n    \n    // Report conflicts if any\n    const conflicts = results.filter(r => r.conflict);\n    if (conflicts.length > 0) {\n      console.log(`\\n${conflicts.length} conflicts detected. Use --force to override local changes or resolve conflicts with:`);\n      console.log('task-master sync conflicts');\n      console.log('task-master sync resolve --conflict-id=X --strategy=local|monday|manual');\n    }\n    \n    console.log('\\nSync completed.');\n  } catch (error) {\n    console.error('Error during sync:', error.message);\n  }\n}\n\n// Update handleSyncCommands to include pull-from-monday\nasync function handleSyncCommands(args) {\n  const subcommand = args._[1];\n  \n  switch (subcommand) {\n    case 'push-to-monday':\n      return updateMondayFromLocal(args);\n    case 'pull-from-monday':\n      return updateLocalFromMonday(args);\n    // Other sync subcommands\n    default:\n      console.error(`Unknown sync subcommand: ${subcommand}`);\n      console.log('Available subcommands: push-to-monday, pull-from-monday');\n  }\n}\n```",
-      "testStrategy": "1. Test CLI command parsing for update-local-from-monday\n2. Verify options handling: --item-id, --dry-run, --force\n3. Test progress reporting and error handling\n4. Integration test with actual Monday.com API\n5. Test command help and documentation\n6. Verify sync results reporting\n7. Test conflict detection and reporting\n8. Test with various item data scenarios\n9. Run command tests:\n   - `task-master update-local-from-monday --dry-run`\n   - `task-master update-local-from-monday --item-id=12345678`\n   - `task-master sync pull-from-monday --dry-run`",
-      "priority": "medium",
-      "dependencies": [
-        125
       ],
       "status": "pending",
       "subtasks": [],
@@ -6480,21 +6391,6 @@
       "testStrategy": "1. Unit test the MondayStorageProvider with mocked dependencies\n2. Test all task operations (create, update, delete) through Monday API\n3. Verify local cache usage and refresh strategies\n4. Test offline behavior and error handling\n5. Integration test with actual Monday.com API\n6. Test performance with different cache strategies\n7. Verify field mapping between Task Master and Monday\n8. Test error handling and recovery\n9. Run command test: `task-master config --set-mode=monday`",
       "priority": "medium",
       "dependencies": [
-        127
-      ],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
-    },
-    {
-      "id": 130,
-      "title": "Implement mode migration tools",
-      "description": "Create tools for migrating tasks between different persistence modes (local, Monday, hybrid) without data loss.",
-      "details": "1. Implement migration commands for all mode transitions\n2. Add validation and rollback capabilities\n3. Handle dependency mapping between systems\n4. Implement data export/import between all modes\n5. Add progress reporting and error handling\n\nImplementation details:\n```javascript\n// In commands.js\nasync function migrateMode(args) {\n  const fromMode = args['--from'];\n  const toMode = args['--to'];\n  const dryRun = args['--dry-run'] === true;\n  \n  if (!fromMode || !toMode) {\n    console.error('Missing required arguments: --from and --to');\n    console.log('Usage: task-master migrate --from=MODE --to=MODE [--dry-run]');\n    console.log('Available modes: local, monday, hybrid');\n    return;\n  }\n  \n  if (!['local', 'monday', 'hybrid'].includes(fromMode)) {\n    console.error(`Invalid from mode: ${fromMode}. Must be one of: local, monday, hybrid`);\n    return;\n  }\n  \n  if (!['local', 'monday', 'hybrid'].includes(toMode)) {\n    console.error(`Invalid to mode: ${toMode}. Must be one of: local, monday, hybrid`);\n    return;\n  }\n  \n  if (fromMode === toMode) {\n    console.error(`Source and destination modes are the same: ${fromMode}`);\n    return;\n  }\n  \n  console.log(`Migrating from ${fromMode} mode to ${toMode} mode${dryRun ? ' (dry run)' : ''}...`);\n  \n  // Get current configuration\n  const config = require('./config').getConfig();\n  const currentMode = config.persistence?.mode || 'local';\n  \n  if (currentMode !== fromMode) {\n    console.error(`Current mode (${currentMode}) does not match source mode (${fromMode})`);\n    console.log(`Use 'task-master config --set-mode=${fromMode}' first, or specify the correct source mode`);\n    return;\n  }\n  \n  // Create backup before migration\n  const backupFile = `tasks-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;\n  try {\n    await fs.copyFile('tasks.json', backupFile);\n    console.log(`Created backup: ${backupFile}`);\n  } catch (error) {\n    console.error('Failed to create backup:', error.message);\n    if (!dryRun) {\n      console.log('Migration aborted for safety');\n      return;\n    }\n  }\n  \n  try {\n    // Perform migration based on source and destination modes\n    switch (`${fromMode}-to-${toMode}`) {\n      case 'local-to-monday':\n        await migrateLocalToMonday(dryRun);\n        break;\n        \n      case 'local-to-hybrid':\n        await migrateLocalToHybrid(dryRun);\n        break;\n        \n      case 'monday-to-local':\n        await migrateMondayToLocal(dryRun);\n        break;\n        \n      case 'monday-to-hybrid':\n        await migrateMondayToHybrid(dryRun);\n        break;\n        \n      case 'hybrid-to-local':\n        await migrateHybridToLocal(dryRun);\n        break;\n        \n      case 'hybrid-to-monday':\n        await migrateHybridToMonday(dryRun);\n        break;\n    }\n    \n    // Update configuration if not dry run\n    if (!dryRun) {\n      config.persistence = config.persistence || {};\n      config.persistence.mode = toMode;\n      require('./config').saveConfig(config);\n      console.log(`Configuration updated to ${toMode} mode`);\n    }\n    \n    console.log('Migration completed successfully');\n  } catch (error) {\n    console.error('Migration failed:', error.message);\n    console.log(`Restore from backup with: cp ${backupFile} tasks.json`);\n  }\n}\n\nasync function migrateLocalToMonday(dryRun) {\n  console.log('Migrating local tasks to Monday...');\n  \n  const mondaySyncEngine = require('./modules/monday-sync');\n  const tasks = require('./modules/local-storage').loadTasks();\n  \n  console.log(`Found ${tasks.length} local tasks to migrate`);\n  \n  if (dryRun) {\n    console.log('DRY RUN: Would push all tasks to Monday');\n    return;\n  }\n  \n  // Push all tasks to Monday\n  const results = await mondaySyncEngine.pushAllTasksToMonday({ force: true });\n  \n  const successful = results.filter(r => r.success).length;\n  console.log(`Successfully migrated ${successful} of ${tasks.length} tasks to Monday`);\n  \n  if (successful < tasks.length) {\n    console.warn('Some tasks failed to migrate. Check logs for details.');\n  }\n}\n\n// Implement other migration functions similarly\nasync function migrateLocalToHybrid(dryRun) { /* ... */ }\nasync function migrateMondayToLocal(dryRun) { /* ... */ }\nasync function migrateMondayToHybrid(dryRun) { /* ... */ }\nasync function migrateHybridToLocal(dryRun) { /* ... */ }\nasync function migrateHybridToMonday(dryRun) { /* ... */ }\n```",
-      "testStrategy": "1. Test migration commands with mocked dependencies\n2. Verify data integrity during migrations\n3. Test rollback capabilities\n4. Test all mode transitions:\n   - local → monday\n   - local → hybrid\n   - monday → local\n   - monday → hybrid\n   - hybrid → local\n   - hybrid → monday\n5. Test with dry run option\n6. Verify configuration updates after migration\n7. Test backup and restore functionality\n8. Integration test with actual Monday.com API\n9. Test error handling and recovery\n10. Run command tests:\n    - `task-master migrate --from=local --to=monday --dry-run`\n    - `task-master migrate --from=local --to=hybrid`\n    - `task-master migrate --from=monday --to=local`",
-      "priority": "medium",
-      "dependencies": [
-        129,
         127
       ],
       "status": "pending",

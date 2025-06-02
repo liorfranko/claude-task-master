@@ -1,7 +1,7 @@
 # Task ID: 117
 # Title: Implement Comprehensive Testing Suite
 # Status: pending
-# Dependencies: 105, 108, 110, 111, 114, 116
+# Dependencies: 108, 110, 111, 114, 116
 # Priority: medium
 # Description: Create a comprehensive testing suite for all persistence modes, sync operations, and error scenarios.
 # Details:
