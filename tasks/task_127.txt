@@ -1,7 +1,7 @@
 # Task ID: 127
 # Title: Implement hybrid mode with automatic synchronization
 # Status: pending
-# Dependencies: 125, 124
+# Dependencies: 125
 # Priority: high
 # Description: Enhance the persistence manager to support hybrid mode where tasks are stored in both systems with automatic bidirectional synchronization.
 # Details:

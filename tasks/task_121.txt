@@ -1,7 +1,7 @@
 # Task ID: 121
 # Title: Implement local storage engine enhancements
 # Status: pending
-# Dependencies: 120
+# Dependencies: None
 # Priority: medium
 # Description: Enhance the local storage engine to support Monday.com integration by adding sync-related fields to the task schema and implementing methods for tracking sync status.
 # Details:
