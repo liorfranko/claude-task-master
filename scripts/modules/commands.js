@@ -13,7 +13,7 @@ import http from 'http';
 import inquirer from 'inquirer';
 import ora from 'ora'; // Import ora
 
-import { log, readJSON } from './utils.js';
+import { log, readJSON, writeJSON } from './utils.js';
 import {
 	parsePRD,
 	updateTasks,
@@ -2898,6 +2898,7 @@ Examples:
 		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
 		.option('--task-id <id>', 'Sync only a specific task by ID')
 		.option('--dry-run', 'Show what would be synced without making changes')
+		.option('--force', 'Clear all sync data and resync all tasks from scratch')
 		.action(async (options) => {
 			try {
 				const projectRoot = findProjectRoot();
@@ -2943,6 +2944,36 @@ Examples:
 					process.exit(1);
 				}
 
+				// Handle force option - clear all Monday sync data to start fresh
+				if (options.force) {
+					console.log(chalk.yellow('🔄 Force mode: Clearing all Monday sync data and resyncing from scratch...\n'));
+					
+					// Clear Monday sync data from all tasks and subtasks
+					tasks.tasks.forEach(task => {
+						// Clear task sync data and mark as pending
+						delete task.mondayItemId;
+						task.syncStatus = 'pending';  // Mark as pending so it gets picked up by sync
+						delete task.syncError;
+						delete task.lastSyncedAt;
+						delete task.lastModifiedMonday;
+						
+						// Clear subtask sync data and mark as pending
+						if (task.subtasks && Array.isArray(task.subtasks)) {
+							task.subtasks.forEach(subtask => {
+								delete subtask.mondayItemId;
+								subtask.syncStatus = 'pending';  // Mark as pending so it gets picked up by sync--all
+								delete subtask.syncError;
+								delete subtask.lastSyncedAt;
+								delete subtask.lastModifiedMonday;
+							});
+						}
+					});
+					
+					// Save the cleaned tasks file
+					writeJSON(tasksPath, tasks);
+					console.log(chalk.green('✅ Cleared all Monday sync data from tasks.json'));
+				}
+
 				// Handle dry run mode
 				if (options.dryRun) {
 					console.log(chalk.blue('🔍 Dry run mode - no changes will be made to Monday.com\n'));
@@ -2952,7 +2983,7 @@ Examples:
 						const task = tasks.tasks.find(t => t.id === taskId);
 						if (task) {
 							console.log(chalk.green(`Would sync task ${task.id}: ${task.title}`));
-							if (task.mondayItemId) {
+							if (task.mondayItemId && !options.force) {
 								console.log(chalk.yellow(`  → Update existing Monday item ${task.mondayItemId}`));
 							} else {
 								console.log(chalk.blue('  → Create new Monday item'));
@@ -2960,7 +2991,7 @@ Examples:
 							
 							// Check subtasks if they exist
 							if (task.subtasks && task.subtasks.length > 0) {
-								const subtasksNeedingSync = task.subtasks.filter(st => 
+								const subtasksNeedingSync = options.force ? task.subtasks : task.subtasks.filter(st => 
 									st.syncStatus === 'pending' || st.syncStatus === 'error' || !st.hasOwnProperty('syncStatus')
 								);
 								if (subtasksNeedingSync.length > 0) {
@@ -2975,10 +3006,29 @@ Examples:
 							process.exit(1);
 						}
 					} else {
-						// Use getTasksNeedingSync to show only items that actually need syncing
-						const itemsToSync = getTasksNeedingSync(tasksPath);
+						// In force mode, sync everything; otherwise use getTasksNeedingSync
+						let itemsToSync;
+						if (options.force) {
+							// Count all tasks and subtasks for force mode
+							itemsToSync = [];
+							tasks.tasks.forEach(task => {
+								itemsToSync.push({ type: 'task', id: task.id, task });
+								if (task.subtasks && Array.isArray(task.subtasks)) {
+									task.subtasks.forEach(subtask => {
+										itemsToSync.push({ 
+											type: 'subtask', 
+											id: `${task.id}.${subtask.id}`, 
+											task: subtask, 
+											parentId: task.id 
+										});
+									});
+								}
+							});
+						} else {
+							itemsToSync = getTasksNeedingSync(tasksPath);
+						}
 						
-						console.log(chalk.green(`Would sync ${itemsToSync.length} items that need syncing:`));
+						console.log(chalk.green(`Would sync ${itemsToSync.length} items${options.force ? ' (all tasks and subtasks)' : ' that need syncing'}:`));
 						itemsToSync.forEach(item => {
 							if (item.type === 'task') {
 								console.log(chalk.blue(`  - Task ${item.id}: ${item.task.title}`));
@@ -2987,7 +3037,7 @@ Examples:
 							}
 						});
 						
-						if (itemsToSync.length === 0) {
+						if (itemsToSync.length === 0 && !options.force) {
 							console.log(chalk.green('✅ All tasks and subtasks are already synced - nothing to do!'));
 						}
 					}
@@ -3027,15 +3077,21 @@ Examples:
 							process.exit(1);
 						}
 					} else {
-						// Only sync tasks that need syncing
-						const itemsToSync = getTasksNeedingSync(tasksPath);
-						
-						if (itemsToSync.length === 0) {
-							spinner.succeed(chalk.green('✅ All tasks and subtasks are already synced - nothing to sync!'));
-							return;
+						// In force mode, sync everything; otherwise only sync tasks that need syncing
+						let itemsToSync;
+						if (options.force) {
+							// Force mode - sync all tasks
+							spinner.text = 'Force mode: Syncing all tasks to Monday.com...';
+						} else {
+							itemsToSync = getTasksNeedingSync(tasksPath);
+							
+							if (itemsToSync.length === 0) {
+								spinner.succeed(chalk.green('✅ All tasks and subtasks are already synced - nothing to sync!'));
+								return;
+							}
+							spinner.text = `Syncing ${itemsToSync.length} items to Monday.com...`;
 						}
 
-						spinner.text = `Syncing ${itemsToSync.length} items to Monday.com...`;
 						const results = await syncEngine.syncAll(tasksPath);
 						
 						spinner.stop();
@@ -3044,6 +3100,10 @@ Examples:
 						console.log(chalk.green(`  ✅ Succeeded: ${results.synced}`));
 						console.log(chalk.red(`  ❌ Failed: ${results.errors}`));
 						console.log(chalk.blue(`  📋 Total: ${results.totalItems}`));
+						
+						if (options.force) {
+							console.log(chalk.yellow('\n🔄 Force sync completed - all tasks have been resynced from scratch'));
+						}
 						
 						if (results.errors > 0) {
 							console.log(chalk.red('\n❌ Failed items:'));

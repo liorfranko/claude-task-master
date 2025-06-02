@@ -593,23 +593,23 @@ function displayHelp() {
 			commands: [
 				{
 					name: 'config-monday',
-					args: '[--board-id=<id>] [--token=<token>] [--show] [--validate] [--init-board]',
+					args: '[--board-id=<id>] [--token=<token>] [--status-column=<name>] [--name-column=<name>] [--notes-column=<name>] [--details-column=<name>] [--task-id-column=<name>] [--priority-column=<name>] [--test-strategy-column=<name>] [--dependencies-column=<name>] [--auto-sync] [--no-auto-sync] [--show] [--validate] [--init-board]',
 					desc: 'Configure Monday.com integration settings'
 				},
 				{
 					name: 'sync-monday',
-					args: '[--dry-run] [--task-id=<id>] [--all]',
-					desc: 'Sync tasks to Monday.com board'
+					args: '[-f, --file=<file>] [--task-id=<id>] [--dry-run] [--force]',
+					desc: 'Sync all tasks to Monday.com board'
 				},
 				{
 					name: 'monday-status',
-					args: '[--detailed] [--summary]',
-					desc: 'Show Monday.com sync status and board information'
+					args: '[-f, --file=<file>] [--verbose]',
+					desc: 'Show Monday.com sync status'
 				},
 				{
 					name: 'init-monday-sync',
-					args: '[--force]',
-					desc: 'Initialize Monday.com sync fields for all tasks'
+					args: '[-f, --file=<file>] [-y, --yes]',
+					desc: 'Initialize all local tasks with Monday.com sync fields (sets syncStatus to pending)'
 				}
 			]
 		}
