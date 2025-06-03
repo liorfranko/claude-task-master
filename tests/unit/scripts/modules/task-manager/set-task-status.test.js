@@ -17,7 +17,8 @@ jest.unstable_mockModule('../../../../../scripts/modules/utils.js', () => ({
 	sanitizePrompt: jest.fn((prompt) => prompt),
 	truncate: jest.fn((text) => text),
 	isSilentMode: jest.fn(() => false),
-	findTaskById: jest.fn((tasks, id) => tasks.find((t) => t.id === parseInt(id)))
+	findTaskById: jest.fn((tasks, id) => tasks.find((t) => t.id === parseInt(id))),
+	findProjectRoot: jest.fn(() => '/mock/project/root')
 }));
 
 jest.unstable_mockModule(
@@ -74,7 +75,12 @@ jest.unstable_mockModule(
 jest.unstable_mockModule(
 	'../../../../../scripts/modules/config-manager.js',
 	() => ({
-		getDebugFlag: jest.fn(() => false)
+		getDebugFlag: jest.fn(() => false),
+		getPersistenceMode: jest.fn(() => 'local'),
+		getHybridAutoSync: jest.fn(() => false),
+		getMondayApiToken: jest.fn(() => 'mock-token'),
+		getMondayIntegrationConfig: jest.fn(() => ({ boardId: 'mock-board' })),
+		getLogLevel: jest.fn(() => 'info')
 	})
 );
 

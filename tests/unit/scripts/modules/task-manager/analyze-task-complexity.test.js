@@ -133,10 +133,14 @@ jest.unstable_mockModule(
 			temperature: 0.7
 		})),
 		getUserId: jest.fn(() => '1234567890'),
+		getPersistenceMode: jest.fn(() => 'local'),
+		getHybridAutoSync: jest.fn(() => false),
 
 		// API Key Checkers
 		isApiKeySet: jest.fn(() => true),
 		getMcpApiKeyStatus: jest.fn(() => true),
+		getMondayApiToken: jest.fn(() => 'mock-token'),
+		getMondayIntegrationConfig: jest.fn(() => ({ boardId: 'mock-board' })),
 
 		// Additional functions
 		getAllProviders: jest.fn(() => ['anthropic', 'openai', 'perplexity']),

@@ -14,7 +14,9 @@ jest.unstable_mockModule('../../../../../scripts/modules/utils.js', () => ({
 		temperature: 0.7,
 		debug: false
 	},
-	truncate: jest.fn((text) => text)
+	truncate: jest.fn((text) => text),
+	findTaskById: jest.fn(),
+	findProjectRoot: jest.fn(() => '/mock/project/root')
 }));
 
 jest.unstable_mockModule('../../../../../scripts/modules/ui.js', () => ({
@@ -59,7 +61,13 @@ jest.unstable_mockModule(
 jest.unstable_mockModule(
 	'../../../../../scripts/modules/config-manager.js',
 	() => ({
-		getDefaultPriority: jest.fn(() => 'medium')
+		getDefaultPriority: jest.fn(() => 'medium'),
+		getPersistenceMode: jest.fn(() => 'local'),
+		getHybridAutoSync: jest.fn(() => false),
+		getMondayApiToken: jest.fn(() => 'mock-token'),
+		getMondayIntegrationConfig: jest.fn(() => ({ boardId: 'mock-board' })),
+		getLogLevel: jest.fn(() => 'info'),
+		getDebugFlag: jest.fn(() => false)
 	})
 );
 

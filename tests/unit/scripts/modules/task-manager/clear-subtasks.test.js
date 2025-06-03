@@ -16,7 +16,9 @@ jest.unstable_mockModule('../../../../../scripts/modules/utils.js', () => ({
 	},
 	findTaskById: jest.fn(),
 	isSilentMode: jest.fn(() => false),
-	truncate: jest.fn((text) => text)
+	truncate: jest.fn((text) => text),
+	findProjectRoot: jest.fn(() => '/mock/project/root'),
+	resolveEnvVariable: jest.fn()
 }));
 
 jest.unstable_mockModule('../../../../../scripts/modules/ui.js', () => ({

@@ -35,7 +35,9 @@ mockMondayClient.mockReturnValue(mockClientInstance);
 // Mock all dependencies before importing the module under test
 jest.unstable_mockModule('../../scripts/modules/config-manager.js', () => ({
   getMondayIntegrationConfig: mockGetMondayIntegrationConfig,
-  getMondayApiToken: mockGetMondayApiToken
+  getMondayApiToken: mockGetMondayApiToken,
+  getDebugFlag: jest.fn(() => false),
+  getLogLevel: jest.fn(() => 'info')
 }));
 
 jest.unstable_mockModule('../../scripts/modules/monday-client.js', () => ({

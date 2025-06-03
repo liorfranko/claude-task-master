@@ -7,8 +7,7 @@ import {
   markSubtaskForSync,
   getTasksNeedingSync 
 } from './task-manager/monday-sync-utils.js';
-import LocalStorageProvider from './storage/local-storage-provider.js';
-import { readJSON, writeJSON } from './utils.js';
+import { readJSON, writeJSON, findTaskById } from './utils.js';
 import path from 'path';
 
 /**
@@ -861,24 +860,35 @@ export class MondaySyncEngine {
   }
 
   /**
-   * Save a pulled task to local storage (tasks.json)
-   * @param {Object} taskData - Task data pulled from Monday.com
+   * Save a task to local tasks.json file
+   * @param {Object} taskData - Task data from Monday.com
    * @param {Object} options - Save options
-   * @param {boolean} options.force - If true, overwrite existing task without conflict check
+   * @param {boolean} options.force - If true, overwrite local changes without conflict detection
    * @param {string} options.tasksPath - Custom path to tasks.json file
-   * @returns {Promise<Object>} Result with success status and task info
+   * @returns {Promise<Object>} Save operation result
    */
   async saveTaskToLocal(taskData, options = {}) {
     const { force = false, tasksPath = null } = options;
     
     try {
-      // Initialize storage provider
+      // Determine tasks file path
       const customTasksPath = tasksPath || path.join(this.projectRoot, '.taskmaster', 'tasks', 'tasks.json');
-      const storage = new LocalStorageProvider({ tasksPath: customTasksPath });
-      await storage.initialize();
+      
+      // Read existing tasks data
+      let data;
+      try {
+        data = readJSON(customTasksPath);
+      } catch (error) {
+        // If file doesn't exist, create new structure
+        data = { tasks: [] };
+      }
+      
+      if (!data || !data.tasks) {
+        data = { tasks: [] };
+      }
       
       // Check if task already exists locally
-      const existingTask = await storage.getTask(taskData.id);
+      const existingTask = findTaskById(data.tasks, taskData.id);
       
       if (existingTask && !force) {
         // Check for conflicts
@@ -904,15 +914,25 @@ export class MondaySyncEngine {
           ...taskData,
           lastSyncedAt: new Date().toISOString()
         };
-        savedTask = await storage.updateTask(taskData.id, updateData);
+        
+        // Find and update the task in the array
+        const taskIndex = data.tasks.findIndex(t => t.id === taskData.id);
+        if (taskIndex !== -1) {
+          data.tasks[taskIndex] = { ...data.tasks[taskIndex], ...updateData };
+          savedTask = data.tasks[taskIndex];
+        }
       } else {
         // Create new task
         const newTaskData = {
           ...taskData,
           lastSyncedAt: new Date().toISOString()
         };
-        savedTask = await storage.createTask(newTaskData);
+        data.tasks.push(newTaskData);
+        savedTask = newTaskData;
       }
+      
+      // Write updated data back to file
+      writeJSON(customTasksPath, data);
       
       return {
         success: true,
