@@ -42,9 +42,6 @@
       "testStrategy": "test_strategy",
       "dependencies": "task_dependencies",
       "notes": "task_details"
-    },
-    "syncSettings": {
-      "autoSync": false
     }
   }
 }

@@ -56,6 +56,7 @@ import {
 	validateMondayConfigWithBoardInfo,
 	getMondayIntegrationConfig,
 	updateMondayConfig,
+	updateHybridConfig,
 	getMondayColumnMapping,
 	getPersistenceConfig,
 	getPersistenceMode,
@@ -2648,7 +2649,9 @@ Examples:
 					console.log(`  Test Strategy: ${config.columnMapping.testStrategy}`);
 					console.log(`  Dependencies: ${config.columnMapping.dependencies}`);
 					console.log('\n⚙️ Sync Settings:');
-					console.log(`  Auto-sync: ${config.syncSettings.autoSync ? 'Enabled' : 'Disabled'}`);
+					const { getHybridAutoSync } = await import('./config-manager.js');
+					const autoSync = getHybridAutoSync();
+					console.log(`  Auto-sync: ${autoSync ? 'Enabled' : 'Disabled'}`);
 					return;
 				}
 
@@ -2842,15 +2845,23 @@ Examples:
 				}
 
 				// Auto-sync setting
-				if (options.autoSync === true) updates.autoSync = true;
-				if (options.autoSync === false) updates.autoSync = false;
+				const hybridUpdates = {};
+				if (options.autoSync === true) hybridUpdates.autoSync = true;
+				if (options.autoSync === false) hybridUpdates.autoSync = false;
 
-				if (Object.keys(updates).length === 0) {
+				if (Object.keys(updates).length === 0 && Object.keys(hybridUpdates).length === 0) {
 					console.log('No configuration changes specified. Use --show to view current settings.');
 					return;
 				}
 
-				updateMondayConfig(updates);
+				if (Object.keys(updates).length > 0) {
+					updateMondayConfig(updates);
+				}
+				
+				if (Object.keys(hybridUpdates).length > 0) {
+					updateHybridConfig(hybridUpdates);
+				}
+				
 				console.log('✅ Monday.com configuration updated successfully');
 
 				// Show what was updated
@@ -2862,8 +2873,8 @@ Examples:
 						console.log(`  ${key}: ${value}`);
 					});
 				}
-				if (updates.autoSync !== undefined) {
-					console.log(`⚙️ Auto-sync: ${updates.autoSync ? 'Enabled' : 'Disabled'}`);
+				if (hybridUpdates.autoSync !== undefined) {
+					console.log(`⚙️ Auto-sync: ${hybridUpdates.autoSync ? 'Enabled' : 'Disabled'}`);
 				}
 
 			} catch (error) {

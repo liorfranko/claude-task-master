@@ -10,9 +10,6 @@ describe('Monday.com Configuration Manager', () => {
           name: 'name',
           notes: 'notes',
           details: 'details'
-        },
-        syncSettings: {
-          autoSync: false
         }
       };
 
@@ -22,15 +19,11 @@ describe('Monday.com Configuration Manager', () => {
       expect(expectedDefaultConfig.columnMapping).toHaveProperty('name');
       expect(expectedDefaultConfig.columnMapping).toHaveProperty('notes');
       expect(expectedDefaultConfig.columnMapping).toHaveProperty('details');
-      expect(expectedDefaultConfig.syncSettings).toHaveProperty('autoSync');
-      expect(expectedDefaultConfig.syncSettings.autoSync).toBe(false);
     });
 
     test('should support valid configuration updates', () => {
       const validUpdates = [
         { boardId: '9275265350' },
-        { autoSync: true },
-        { autoSync: false },
         { 
           columnMapping: {
             status: 'Status Column',
@@ -49,21 +42,17 @@ describe('Monday.com Configuration Manager', () => {
     });
 
     test('should validate expected configuration keys', () => {
-      const requiredConfigKeys = ['boardId', 'columnMapping', 'syncSettings'];
+      const requiredConfigKeys = ['boardId', 'columnMapping'];
       const requiredColumnKeys = ['status', 'name', 'notes', 'details'];
-      const requiredSyncKeys = ['autoSync'];
 
       // Verify we have the right structure expectations
       expect(requiredConfigKeys).toContain('boardId');
       expect(requiredConfigKeys).toContain('columnMapping');
-      expect(requiredConfigKeys).toContain('syncSettings');
       
       expect(requiredColumnKeys).toContain('status');
       expect(requiredColumnKeys).toContain('name');
       expect(requiredColumnKeys).toContain('notes');
       expect(requiredColumnKeys).toContain('details');
-      
-      expect(requiredSyncKeys).toContain('autoSync');
     });
   });
 
@@ -97,16 +86,6 @@ describe('Monday.com Configuration Manager', () => {
         expect(typeof value).toBe('string');
         expect(key.length).toBeGreaterThan(0);
         expect(value.length).toBeGreaterThan(0);
-      });
-    });
-  });
-
-  describe('Sync Settings Validation', () => {
-    test('should validate autoSync setting', () => {
-      const validAutoSyncValues = [true, false];
-      
-      validAutoSyncValues.forEach(value => {
-        expect(typeof value).toBe('boolean');
       });
     });
   });

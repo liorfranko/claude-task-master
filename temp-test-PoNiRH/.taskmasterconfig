@@ -1,13 +1,11 @@
 {
   "mondayIntegration": {
-    "boardId": "9275265350",
+    "boardId": null,
     "columnMapping": {
-      "status": "color_mkrg4361",
-      "description": "long_text_mkrgfn70",
-      "title": "name"
-    },
-    "syncSettings": {
-      "autoSync": false
+      "status": "status",
+      "name": "name",
+      "notes": "notes",
+      "details": "details"
     }
   }
 }

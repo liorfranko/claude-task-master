@@ -57,7 +57,6 @@ export class MondaySyncEngine {
     
     this.boardId = config.boardId;
     this.columnMapping = config.columnMapping || {};
-    this.syncSettings = config.syncSettings || {};
     this.client = new MondayClient(apiToken);
     this.session = session;
   }

@@ -56,9 +56,16 @@ describe('BaseStorageProvider', () => {
 describe('PersistenceManager', () => {
 	let manager;
 	let mockProvider;
+	let mockConfig;
 
 	beforeEach(() => {
-		manager = new PersistenceManager();
+		// Create a mock config that ensures tests are isolated from real config file
+		mockConfig = {
+			persistence: { mode: 'local' },
+			global: { logLevel: 'info' }
+		};
+		
+		manager = new PersistenceManager(mockConfig);
 		
 		// Create a mock provider
 		mockProvider = {
