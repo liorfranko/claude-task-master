@@ -1,6 +1,6 @@
 # Task ID: 123
 # Title: Implement push-to-Monday functionality
-# Status: pending
+# Status: done
 # Dependencies: None
 # Priority: high
 # Description: Create the sync engine component that handles pushing local tasks to Monday.com, including task-to-item mapping and status conversion.

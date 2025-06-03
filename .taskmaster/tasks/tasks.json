@@ -6522,9 +6522,12 @@
       "testStrategy": "1. Unit test the MondaySyncEngine with mocked Monday client\n2. Test task-to-Monday mapping with various task data\n3. Test status and priority mapping\n4. Verify sync status tracking\n5. Test error handling and retry logic\n6. Integration test with actual Monday.com API\n7. Test dry run functionality\n8. Test pushing specific tasks by ID\n9. Verify force sync option\n10. Run command test: `task-master update-monday-from-local --dry-run`",
       "priority": "high",
       "dependencies": [],
-      "status": "pending",
+      "status": "done",
       "subtasks": [],
-      "syncStatus": "pending"
+      "syncStatus": "pending",
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncError": null
     },
     {
       "id": 125,
@@ -6536,9 +6539,12 @@
       "dependencies": [
         123
       ],
-      "status": "pending",
+      "status": "done",
       "subtasks": [],
-      "syncStatus": "pending"
+      "syncStatus": "pending",
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncError": null
     },
     {
       "id": 127,

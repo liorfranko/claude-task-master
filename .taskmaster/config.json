@@ -1,20 +1,20 @@
 {
   "models": {
     "main": {
-      "provider": "anthropic",
-      "modelId": "claude-sonnet-4-20250514",
+      "provider": "bedrock",
+      "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
       "maxTokens": 50000,
       "temperature": 0.2
     },
     "research": {
-      "provider": "openai",
-      "modelId": "gpt-4o-search-preview",
+      "provider": "bedrock",
+      "modelId": "anthropic.claude-opus-4-20250514-v1:0",
       "maxTokens": 8700,
       "temperature": 0.1
     },
     "fallback": {
-      "provider": "openrouter",
-      "modelId": "deepseek/deepseek-chat-v3-0324:free",
+      "provider": "bedrock",
+      "modelId": "anthropic.claude-3-7-sonnet-20250219-v1:0",
       "maxTokens": 128000,
       "temperature": 0.2
     }
@@ -41,6 +41,7 @@
   },
   "mondayIntegration": {
     "boardId": "9276172766",
+    "apiToken": null,
     "columnMapping": {
       "status": "status",
       "title": "name",

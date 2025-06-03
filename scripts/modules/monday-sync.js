@@ -7,6 +7,9 @@ import {
   markSubtaskForSync,
   getTasksNeedingSync 
 } from './task-manager/monday-sync-utils.js';
+import { LocalStorageProvider } from './storage/local-storage-provider.js';
+import { readJSON, writeJSON } from './utils.js';
+import path from 'path';
 
 /**
  * Monday.com Sync Engine for Task Master
@@ -77,6 +80,39 @@ export class MondaySyncEngine {
       'deferred': 'Deferred'            // Map deferred to our custom "Deferred" label
     };
     return statusMap[taskStatus] || 'Pending';  // Default to "Pending"
+  }
+
+  /**
+   * Map Monday.com status labels back to Task Master status
+   * @param {string} mondayStatus Monday.com status label
+   * @returns {string} Task Master status value
+   */
+  mapStatusFromMonday(mondayStatus) {
+    const statusMap = {
+      'Pending': 'pending',
+      'In Progress': 'in-progress',
+      'Working on it': 'in-progress',    // Handle built-in Monday status
+      'Done': 'done',
+      'Stuck': 'deferred',               // Handle built-in Monday status
+      'Deferred': 'deferred'
+    };
+    return statusMap[mondayStatus] || 'pending';  // Default to "pending"
+  }
+
+  /**
+   * Map Monday.com priority back to Task Master priority
+   * @param {string} mondayPriority Monday.com priority label
+   * @returns {string} Task Master priority value
+   */
+  mapPriorityFromMonday(mondayPriority) {
+    const priorityMap = {
+      'High': 'high',
+      'Medium': 'medium',
+      'Low': 'low',
+      'Critical': 'high',     // Map critical to high
+      'Normal': 'medium'      // Map normal to medium
+    };
+    return priorityMap[mondayPriority] || 'medium';  // Default to "medium"
   }
 
   /**
@@ -565,6 +601,495 @@ export class MondaySyncEngine {
             columnMapping: this.columnMapping
           }
         }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Pull a single Monday.com item and convert it to a Task Master task
+   * @param {string} mondayItemId - Monday.com item ID
+   * @param {Object} options - Pull options
+   * @param {boolean} options.dryRun - If true, show what would be done without making changes
+   * @param {boolean} options.force - If true, overwrite local changes without conflict detection
+   * @returns {Promise<Object>} Result with success status and task data
+   */
+  async pullTaskFromMonday(mondayItemId, options = {}) {
+    const { dryRun = false, force = false } = options;
+    
+    try {
+      // Get item from Monday.com
+      const itemResult = await this.client.getItem(mondayItemId);
+      if (!itemResult.success) {
+        return {
+          success: false,
+          error: itemResult.error || 'Failed to get item from Monday.com'
+        };
+      }
+      
+      const mondayItem = itemResult.data;
+      
+      // Extract column values
+      const getColumnValue = (columnId) => {
+        const column = mondayItem.column_values.find(col => col.id === columnId);
+        return column ? column.text || '' : '';
+      };
+      
+      const getColumnValueJson = (columnId) => {
+        const column = mondayItem.column_values.find(col => col.id === columnId);
+        if (!column || !column.value) return '';
+        
+        try {
+          const parsed = JSON.parse(column.value);
+          return parsed.text || '';
+        } catch {
+          return column.text || '';
+        }
+      };
+      
+      // Get Task Master task ID from Monday item
+      const taskMasterTaskId = getColumnValue(this.columnMapping.taskId);
+      
+      // Map Monday item to Task Master task structure
+      const taskFromMonday = {
+        id: taskMasterTaskId ? parseInt(taskMasterTaskId) : null,
+        title: mondayItem.name,
+        description: getColumnValueJson(this.columnMapping.description),
+        details: getColumnValueJson(this.columnMapping.details),
+        status: this.mapStatusFromMonday(getColumnValue(this.columnMapping.status)),
+        priority: this.mapPriorityFromMonday(getColumnValue(this.columnMapping.priority)),
+        testStrategy: getColumnValueJson(this.columnMapping.testStrategy),
+        mondayItemId,
+        lastModifiedMonday: new Date(mondayItem.updated_at).toISOString(),
+        syncStatus: 'synced'
+      };
+      
+      // Handle subitems (subtasks)
+      if (mondayItem.subitems && mondayItem.subitems.length > 0) {
+        taskFromMonday.subtasks = mondayItem.subitems.map((subitem, index) => {
+          const getSubitemColumnValue = (columnId) => {
+            const column = subitem.column_values.find(col => col.id === columnId);
+            return column ? column.text || '' : '';
+          };
+          
+          const getSubitemColumnValueJson = (columnId) => {
+            const column = subitem.column_values.find(col => col.id === columnId);
+            if (!column || !column.value) return '';
+            
+            try {
+              const parsed = JSON.parse(column.value);
+              return parsed.text || '';
+            } catch {
+              return column.text || '';
+            }
+          };
+          
+          return {
+            id: index + 1,
+            title: subitem.name,
+            description: getSubitemColumnValueJson(this.columnMapping.description),
+            details: getSubitemColumnValueJson(this.columnMapping.details),
+            status: this.mapStatusFromMonday(getSubitemColumnValue(this.columnMapping.status)),
+            dependencies: [],
+            mondayItemId: subitem.id,
+            syncStatus: 'synced'
+          };
+        });
+      }
+      
+      if (dryRun) {
+        return {
+          success: true,
+          dryRun: true,
+          action: taskFromMonday.id ? 'update' : 'create',
+          taskData: taskFromMonday,
+          message: `Would ${taskFromMonday.id ? 'update' : 'create'} local task from Monday item ${mondayItemId}`
+        };
+      }
+      
+      return {
+        success: true,
+        taskData: taskFromMonday,
+        isNewTask: !taskFromMonday.id,
+        mondayItemId
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Pull all synced items from Monday.com board
+   * @param {Object} options - Pull options
+   * @param {boolean} options.dryRun - If true, show what would be done without making changes
+   * @param {boolean} options.force - If true, overwrite local changes without conflict detection
+   * @param {string} options.mondayItemId - If provided, only pull this specific item
+   * @returns {Promise<Object>} Result with success status and pulled tasks data
+   */
+  async pullAllTasksFromMonday(options = {}) {
+    const { dryRun = false, force = false, mondayItemId = null } = options;
+    
+    try {
+      let itemsResult;
+      
+      if (mondayItemId) {
+        // Pull specific item
+        const singleItemResult = await this.pullTaskFromMonday(mondayItemId, { dryRun, force });
+        if (!singleItemResult.success) {
+          return {
+            success: false,
+            error: singleItemResult.error
+          };
+        }
+        
+        return {
+          success: true,
+          results: [singleItemResult],
+          totalItems: 1,
+          processed: 1
+        };
+      } else {
+        // Get all synced items from Monday board
+        itemsResult = await this.client.getSyncedItems(this.boardId, this.columnMapping.taskId);
+        if (!itemsResult.success) {
+          return {
+            success: false,
+            error: itemsResult.error || 'Failed to get items from Monday.com'
+          };
+        }
+      }
+      
+      const mondayItems = itemsResult.data.syncedItems;
+      const results = [];
+      
+      for (const item of mondayItems) {
+        const result = await this.pullTaskFromMonday(item.id, { dryRun, force });
+        results.push({
+          mondayItemId: item.id,
+          itemName: item.name,
+          ...result
+        });
+      }
+      
+      return {
+        success: true,
+        results,
+        totalItems: mondayItems.length,
+        processed: results.length,
+        boardName: itemsResult.data.boardName
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Check for conflicts between local and Monday.com versions of tasks
+   * @param {Object} localTask - Local Task Master task
+   * @param {Object} mondayTask - Task data from Monday.com
+   * @returns {Object} Conflict analysis result
+   */
+  checkForConflicts(localTask, mondayTask) {
+    const conflicts = [];
+    
+    // Check if both have been modified since last sync
+    const localModified = localTask.lastModifiedLocal 
+      ? new Date(localTask.lastModifiedLocal) 
+      : new Date(0);
+    const mondayModified = mondayTask.lastModifiedMonday 
+      ? new Date(mondayTask.lastModifiedMonday) 
+      : new Date(0);
+    const lastSynced = localTask.lastSyncedAt 
+      ? new Date(localTask.lastSyncedAt) 
+      : new Date(0);
+    
+    const localChangedSinceSync = localModified > lastSynced;
+    const mondayChangedSinceSync = mondayModified > lastSynced;
+    
+    if (localChangedSinceSync && mondayChangedSinceSync) {
+      // Check specific field conflicts
+      if (localTask.title !== mondayTask.title) {
+        conflicts.push({
+          field: 'title',
+          local: localTask.title,
+          monday: mondayTask.title
+        });
+      }
+      
+      if (localTask.status !== mondayTask.status) {
+        conflicts.push({
+          field: 'status',
+          local: localTask.status,
+          monday: mondayTask.status
+        });
+      }
+      
+      if (localTask.description !== mondayTask.description) {
+        conflicts.push({
+          field: 'description',
+          local: localTask.description,
+          monday: mondayTask.description
+        });
+      }
+      
+      if (localTask.priority !== mondayTask.priority) {
+        conflicts.push({
+          field: 'priority',
+          local: localTask.priority,
+          monday: mondayTask.priority
+        });
+      }
+    }
+    
+    return {
+      hasConflicts: conflicts.length > 0,
+      conflicts,
+      localChangedSinceSync,
+      mondayChangedSinceSync,
+      lastSynced
+    };
+  }
+
+  /**
+   * Save a pulled task to local storage (tasks.json)
+   * @param {Object} taskData - Task data pulled from Monday.com
+   * @param {Object} options - Save options
+   * @param {boolean} options.force - If true, overwrite existing task without conflict check
+   * @param {string} options.tasksPath - Custom path to tasks.json file
+   * @returns {Promise<Object>} Result with success status and task info
+   */
+  async saveTaskToLocal(taskData, options = {}) {
+    const { force = false, tasksPath = null } = options;
+    
+    try {
+      // Initialize storage provider
+      const customTasksPath = tasksPath || path.join(this.projectRoot, '.taskmaster', 'tasks', 'tasks.json');
+      const storage = new LocalStorageProvider({ tasksPath: customTasksPath });
+      await storage.initialize();
+      
+      // Check if task already exists locally
+      const existingTask = await storage.getTask(taskData.id);
+      
+      if (existingTask && !force) {
+        // Check for conflicts
+        const conflictCheck = this.checkForConflicts(existingTask, taskData);
+        
+        if (conflictCheck.hasConflicts) {
+          return {
+            success: false,
+            conflict: true,
+            conflictDetails: conflictCheck,
+            localTask: existingTask,
+            mondayTask: taskData,
+            message: 'Conflict detected between local and Monday versions'
+          };
+        }
+      }
+      
+      let savedTask;
+      
+      if (existingTask) {
+        // Update existing task
+        const updateData = {
+          ...taskData,
+          lastSyncedAt: new Date().toISOString()
+        };
+        savedTask = await storage.updateTask(taskData.id, updateData);
+      } else {
+        // Create new task
+        const newTaskData = {
+          ...taskData,
+          lastSyncedAt: new Date().toISOString()
+        };
+        savedTask = await storage.createTask(newTaskData);
+      }
+      
+      return {
+        success: true,
+        task: savedTask,
+        action: existingTask ? 'updated' : 'created',
+        message: `Successfully ${existingTask ? 'updated' : 'created'} task ${savedTask.id} from Monday.com`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Complete pull workflow: pull from Monday and save to local
+   * @param {string} mondayItemId - Monday.com item ID to pull (optional, pulls all if not provided)
+   * @param {Object} options - Pull and save options
+   * @param {boolean} options.dryRun - If true, show what would be done without making changes
+   * @param {boolean} options.force - If true, overwrite local changes without conflict detection
+   * @param {string} options.tasksPath - Custom path to tasks.json file
+   * @returns {Promise<Object>} Complete pull operation result
+   */
+  async pullAndSave(mondayItemId = null, options = {}) {
+    const { dryRun = false, force = false, tasksPath = null } = options;
+    
+    try {
+      // Pull task(s) from Monday
+      let pullResult;
+      
+      if (mondayItemId) {
+        pullResult = await this.pullTaskFromMonday(mondayItemId, { dryRun, force });
+        if (!pullResult.success) {
+          return pullResult;
+        }
+        
+        if (dryRun) {
+          return pullResult;
+        }
+        
+        // Save single task
+        const saveResult = await this.saveTaskToLocal(pullResult.taskData, { force, tasksPath });
+        
+        return {
+          success: saveResult.success,
+          results: [saveResult],
+          totalItems: 1,
+          processed: 1,
+          conflicts: saveResult.conflict ? 1 : 0,
+          saved: saveResult.success ? 1 : 0,
+          errors: saveResult.success ? 0 : 1
+        };
+      } else {
+        // Pull all tasks
+        pullResult = await this.pullAllTasksFromMonday({ dryRun, force });
+        if (!pullResult.success) {
+          return pullResult;
+        }
+        
+        if (dryRun) {
+          return pullResult;
+        }
+        
+        // Save all pulled tasks
+        const saveResults = [];
+        let saved = 0;
+        let conflicts = 0;
+        let errors = 0;
+        
+        for (const result of pullResult.results) {
+          if (result.success && result.taskData) {
+            const saveResult = await this.saveTaskToLocal(result.taskData, { force, tasksPath });
+            saveResults.push({
+              mondayItemId: result.mondayItemId,
+              itemName: result.itemName,
+              ...saveResult
+            });
+            
+            if (saveResult.success) {
+              saved++;
+            } else if (saveResult.conflict) {
+              conflicts++;
+            } else {
+              errors++;
+            }
+          } else {
+            saveResults.push({
+              mondayItemId: result.mondayItemId,
+              itemName: result.itemName,
+              success: false,
+              error: result.error || 'Failed to pull from Monday'
+            });
+            errors++;
+          }
+        }
+        
+        return {
+          success: errors === 0,
+          results: saveResults,
+          totalItems: pullResult.totalItems,
+          processed: pullResult.processed,
+          saved,
+          conflicts,
+          errors,
+          boardName: pullResult.boardName
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Resolve conflicts by choosing which version to keep
+   * @param {Object} conflictData - Conflict data from saveTaskToLocal
+   * @param {string} resolution - 'local', 'monday', or 'merge'
+   * @param {Object} mergeData - Custom merge data (when resolution is 'merge')
+   * @param {Object} options - Resolution options
+   * @returns {Promise<Object>} Resolution result
+   */
+  async resolveConflict(conflictData, resolution, mergeData = null, options = {}) {
+    const { tasksPath = null } = options;
+    
+    try {
+      let finalTaskData;
+      
+      switch (resolution) {
+        case 'local':
+          // Keep local version, just update sync timestamp
+          finalTaskData = {
+            ...conflictData.localTask,
+            lastSyncedAt: new Date().toISOString()
+          };
+          break;
+          
+        case 'monday':
+          // Use Monday version
+          finalTaskData = {
+            ...conflictData.mondayTask,
+            lastSyncedAt: new Date().toISOString()
+          };
+          break;
+          
+        case 'merge':
+          // Use custom merge data
+          if (!mergeData) {
+            return {
+              success: false,
+              error: 'Merge data required when resolution is "merge"'
+            };
+          }
+          finalTaskData = {
+            ...conflictData.localTask,
+            ...mergeData,
+            lastSyncedAt: new Date().toISOString()
+          };
+          break;
+          
+        default:
+          return {
+            success: false,
+            error: 'Invalid resolution. Must be "local", "monday", or "merge"'
+          };
+      }
+      
+      // Save resolved task
+      const saveResult = await this.saveTaskToLocal(finalTaskData, { force: true, tasksPath });
+      
+      return {
+        success: saveResult.success,
+        task: saveResult.task,
+        resolution,
+        message: `Conflict resolved using ${resolution} version`
       };
     } catch (error) {
       return {

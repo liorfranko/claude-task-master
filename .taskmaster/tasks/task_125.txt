@@ -1,6 +1,6 @@
 # Task ID: 125
 # Title: Implement pull-from-Monday functionality
-# Status: pending
+# Status: done
 # Dependencies: 123
 # Priority: high
 # Description: Create the sync engine component that handles pulling Monday.com items to local tasks, including item-to-task mapping and status conversion.

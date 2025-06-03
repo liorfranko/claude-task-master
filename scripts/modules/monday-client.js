@@ -507,7 +507,252 @@ export class MondayClient {
     }
   }
 
-  // Additional methods will be implemented in future tasks
+  /**
+   * Get all items from a Monday.com board
+   * @param {string} boardId - Monday.com board ID
+   * @param {object} options - Query options
+   * @param {number} options.limit - Maximum number of items to retrieve (default: 100)
+   * @param {number} options.page - Page number for pagination (default: 1)
+   * @returns {Promise<object>} Result with success status and items data
+   */
+  async getItems(boardId, options = {}) {
+    const { limit = 100, page = 1 } = options;
+    
+    const query = `
+      query GetBoardItems($boardId: [ID!]!, $limit: Int, $page: Int) {
+        boards(ids: $boardId) {
+          id
+          name
+          items_page(limit: $limit, page: $page) {
+            cursor
+            items {
+              id
+              name
+              created_at
+              updated_at
+              column_values {
+                id
+                text
+                value
+                type
+              }
+              subitems {
+                id
+                name
+                created_at
+                updated_at
+                column_values {
+                  id
+                  text
+                  value
+                  type
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    try {
+      const data = await this._executeWithRateLimit(query, {
+        boardId: [boardId],
+        limit,
+        page
+      });
+      
+      if (!data.boards || data.boards.length === 0) {
+        return {
+          success: false,
+          error: `Board ${boardId} not found or not accessible`,
+          message: 'Failed to get items'
+        };
+      }
+      
+      const board = data.boards[0];
+      const items = board.items_page?.items || [];
+      
+      return {
+        success: true,
+        data: {
+          boardId: board.id,
+          boardName: board.name,
+          items,
+          cursor: board.items_page?.cursor,
+          totalRetrieved: items.length
+        },
+        message: `Successfully retrieved ${items.length} items from board`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to get items from board'
+      };
+    }
+  }
+
+  /**
+   * Get a specific item from Monday.com by ID
+   * @param {string} itemId - Monday.com item ID
+   * @returns {Promise<object>} Result with success status and item data
+   */
+  async getItem(itemId) {
+    const query = `
+      query GetItem($itemId: [ID!]!) {
+        items(ids: $itemId) {
+          id
+          name
+          created_at
+          updated_at
+          board {
+            id
+            name
+          }
+          column_values {
+            id
+            text
+            value
+            type
+            column {
+              id
+              title
+              type
+            }
+          }
+          subitems {
+            id
+            name
+            created_at
+            updated_at
+            column_values {
+              id
+              text
+              value
+              type
+              column {
+                id
+                title
+                type
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    try {
+      const data = await this._executeWithRateLimit(query, {
+        itemId: [itemId]
+      });
+      
+      if (!data.items || data.items.length === 0) {
+        return {
+          success: false,
+          error: `Item ${itemId} not found or not accessible`,
+          message: 'Failed to get item'
+        };
+      }
+      
+      const item = data.items[0];
+      
+      return {
+        success: true,
+        data: item,
+        message: `Successfully retrieved item: ${item.name}`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to get item'
+      };
+    }
+  }
+
+  /**
+   * Get items from Monday.com that were synced from Task Master
+   * @param {string} boardId - Monday.com board ID
+   * @param {string} taskIdColumnId - Column ID that stores Task Master task IDs
+   * @returns {Promise<object>} Result with success status and synced items data
+   */
+  async getSyncedItems(boardId, taskIdColumnId) {
+    const query = `
+      query GetSyncedItems($boardId: [ID!]!) {
+        boards(ids: $boardId) {
+          id
+          name
+          items_page(limit: 500) {
+            items {
+              id
+              name
+              created_at
+              updated_at
+              column_values {
+                id
+                text
+                value
+                type
+              }
+              subitems {
+                id
+                name
+                created_at
+                updated_at
+                column_values {
+                  id
+                  text
+                  value
+                  type
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    
+    try {
+      const data = await this._executeWithRateLimit(query, {
+        boardId: [boardId]
+      });
+      
+      if (!data.boards || data.boards.length === 0) {
+        return {
+          success: false,
+          error: `Board ${boardId} not found or not accessible`,
+          message: 'Failed to get synced items'
+        };
+      }
+      
+      const board = data.boards[0];
+      const allItems = board.items_page?.items || [];
+      
+      // Filter items that have a Task Master task ID
+      const syncedItems = allItems.filter(item => {
+        const taskIdColumn = item.column_values.find(col => col.id === taskIdColumnId);
+        return taskIdColumn && taskIdColumn.text && taskIdColumn.text.trim() !== '';
+      });
+      
+      return {
+        success: true,
+        data: {
+          boardId: board.id,
+          boardName: board.name,
+          syncedItems,
+          totalItems: allItems.length,
+          syncedCount: syncedItems.length
+        },
+        message: `Successfully retrieved ${syncedItems.length} synced items from board`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to get synced items from board'
+      };
+    }
+  }
 }
 
 /**
