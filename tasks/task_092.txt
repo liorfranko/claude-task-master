@@ -1,0 +1,82 @@
+# Task ID: 92
+# Title: Install and Configure GraphQL Client
+# Status: done
+# Dependencies: None
+# Priority: high
+# Description: Set up the Monday.com API client by installing the graphql-request dependency and creating the basic client module.
+# Details:
+1. Install the graphql-request dependency (current version 5.2.0)
+2. Create `scripts/modules/monday-client.js` with the following components:
+   - Basic GraphQL client initialization
+   - Authentication with Personal Access Token
+   - Rate limiting implementation (respect 10 requests/second limit)
+   - Implement exponential backoff for API rate limits
+   - Error handling for network failures
+   - Test connection function
+
+Code structure:
+```javascript
+const { GraphQLClient } = require('graphql-request');
+const { setTimeout } = require('timers/promises');
+
+class MondayClient {
+  constructor(token) {
+    this.client = new GraphQLClient('https://api.monday.com/v2', {
+      headers: {
+        'Authorization': token,
+        'Content-Type': 'application/json'
+      }
+    });
+    this.rateLimitDelay = 100; // Start with 100ms between requests
+    this.lastRequestTime = 0;
+  }
+
+  async _executeWithRateLimit(operation, variables) {
+    // Implement rate limiting logic
+    const now = Date.now();
+    const timeElapsed = now - this.lastRequestTime;
+    
+    if (timeElapsed < this.rateLimitDelay) {
+      await setTimeout(this.rateLimitDelay - timeElapsed);
+    }
+    
+    try {
+      this.lastRequestTime = Date.now();
+      return await this.client.request(operation, variables);
+    } catch (error) {
+      if (error.response?.status === 429) {
+        // Rate limited, increase backoff and retry
+        this.rateLimitDelay = Math.min(this.rateLimitDelay * 2, 5000);
+        await setTimeout(1000);
+        return this._executeWithRateLimit(operation, variables);
+      }
+      throw error;
+    }
+  }
+
+  async testConnection() {
+    const query = `query { me { name } }`;
+    try {
+      const data = await this._executeWithRateLimit(query);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Additional methods will be implemented in future tasks
+}
+
+module.exports = { MondayClient };
+```
+
+# Test Strategy:
+1. Create unit tests for the MondayClient class:
+   - Test client initialization with mock token
+   - Test rate limiting logic with mocked timers
+   - Test exponential backoff with simulated 429 responses
+2. Create an integration test that connects to the Monday.com API:
+   - Use the test board ID 9275265350
+   - Verify successful connection with valid token
+   - Verify proper error handling with invalid token
+3. Run test with: `node -e "require('./scripts/modules/monday-client.js').testConnection()"`

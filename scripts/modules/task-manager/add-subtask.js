@@ -3,6 +3,7 @@ import path from 'path';
 import { log, readJSON, writeJSON } from '../utils.js';
 import { isTaskDependentOn } from '../task-manager.js';
 import generateTaskFiles from './generate-task-files.js';
+import { extendTaskWithMondayFields, markTaskForSync } from './monday-sync-utils.js';
 
 /**
  * Add a subtask to a parent task
@@ -124,6 +125,9 @@ async function addSubtask(
 				parentTaskId: parentIdNum
 			};
 
+			// Extend the subtask with Monday.com sync fields
+			Object.assign(newSubtask, extendTaskWithMondayFields(newSubtask));
+
 			// Add to parent's subtasks
 			parentTask.subtasks.push(newSubtask);
 
@@ -136,6 +140,10 @@ async function addSubtask(
 
 		// Write the updated tasks back to the file
 		writeJSON(tasksPath, data);
+
+		// Mark the parent task for sync since subtasks were modified
+		markTaskForSync(tasksPath, parentIdNum);
+		log('info', `Parent task ${parentIdNum} marked for Monday.com sync`);
 
 		// Generate task files if requested
 		if (generateFiles) {

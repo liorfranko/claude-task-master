@@ -1,0 +1,118 @@
+# Task ID: 123
+# Title: Implement push-to-Monday functionality
+# Status: pending
+# Dependencies: None
+# Priority: high
+# Description: Create the sync engine component that handles pushing local tasks to Monday.com, including task-to-item mapping and status conversion.
+# Details:
+1. Create `scripts/modules/monday-sync.js` with one-way sync logic (local → Monday)
+2. Implement task-to-Monday-item mapping based on configuration
+3. Create status mapping between Task Master and Monday.com
+4. Add tracking of sync status and timestamps
+5. Implement error handling and retry logic
+6. Support options for dry run, force sync, and specific task IDs
+
+Implementation details:
+```javascript
+const mondayClient = require('./monday-client');
+const localStorageEngine = require('./local-storage');
+const config = require('../config');
+
+class MondaySyncEngine {
+  constructor() {
+    this.localStorage = localStorageEngine;
+    this.mondayClient = mondayClient;
+  }
+
+  async pushTaskToMonday(task, options = {}) {
+    const { dryRun = false, force = false } = options;
+    
+    // Get column mapping from config
+    const columnMapping = config.getMondayColumnMapping();
+    const boardId = config.getMondayBoardId();
+    
+    // Map task fields to Monday column values
+    const columnValues = {
+      [columnMapping.status]: this._mapStatusToMonday(task.status),
+      [columnMapping.description]: task.description,
+      [columnMapping.priority]: this._mapPriorityToMonday(task.priority)
+    };
+    
+    if (dryRun) {
+      console.log(`Would push task ${task.id} to Monday with values:`, columnValues);
+      return { success: true, dryRun: true };
+    }
+    
+    try {
+      let mondayItemId = task.mondayItemId;
+      
+      if (!mondayItemId) {
+        // Create new item on Monday
+        const result = await this.mondayClient.createItem(boardId, task.title, columnValues);
+        mondayItemId = result.id;
+      } else {
+        // Update existing item
+        await this.mondayClient.updateItem(boardId, mondayItemId, columnValues);
+      }
+      
+      // Update local task with sync info
+      await this.localStorage.markTaskAsSynced(task.id, mondayItemId);
+      
+      return { success: true, mondayItemId };
+    } catch (error) {
+      await this.localStorage.updateSyncStatus(task.id, 'error');
+      return { success: false, error: error.message };
+    }
+  }
+
+  async pushAllTasksToMonday(options = {}) {
+    const tasks = await this.localStorage.loadTasks();
+    const results = [];
+    
+    for (const task of tasks) {
+      if (options.taskId && task.id !== parseInt(options.taskId)) {
+        continue;
+      }
+      
+      const result = await this.pushTaskToMonday(task, options);
+      results.push({ taskId: task.id, ...result });
+    }
+    
+    return results;
+  }
+
+  _mapStatusToMonday(status) {
+    // Map Task Master status to Monday status
+    const statusMap = {
+      'pending': 'Not Started',
+      'in-progress': 'In Progress',
+      'done': 'Done'
+    };
+    return statusMap[status] || 'Not Started';
+  }
+
+  _mapPriorityToMonday(priority) {
+    // Map Task Master priority to Monday priority
+    const priorityMap = {
+      'high': 'High',
+      'medium': 'Medium',
+      'low': 'Low'
+    };
+    return priorityMap[priority] || 'Medium';
+  }
+}
+
+module.exports = new MondaySyncEngine();
+```
+
+# Test Strategy:
+1. Unit test the MondaySyncEngine with mocked Monday client
+2. Test task-to-Monday mapping with various task data
+3. Test status and priority mapping
+4. Verify sync status tracking
+5. Test error handling and retry logic
+6. Integration test with actual Monday.com API
+7. Test dry run functionality
+8. Test pushing specific tasks by ID
+9. Verify force sync option
+10. Run command test: `task-master update-monday-from-local --dry-run`

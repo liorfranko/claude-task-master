@@ -428,6 +428,11 @@ function displayHelp() {
 					name: 'models --set-fallback',
 					args: '<model_id>',
 					desc: 'Set the fallback model (optional)'
+				},
+				{
+					name: 'config-persistence',
+					args: '[--mode=<local|monday|hybrid>] [--show] [--validate] [--migrate]',
+					desc: 'Configure Task Master persistence mode and settings'
 				}
 			]
 		},
@@ -584,6 +589,32 @@ function displayHelp() {
 					name: 'fix-dependencies',
 					args: '',
 					desc: 'Fix invalid dependencies automatically'
+				}
+			]
+		},
+		{
+			title: 'Monday.com Integration',
+			color: 'red', // Using red since it's closest to Monday.com's brand orange
+			commands: [
+				{
+					name: 'config-monday',
+					args: '[--board-id=<id>] [--token=<token>] [--status-column=<name>] [--name-column=<name>] [--notes-column=<name>] [--details-column=<name>] [--task-id-column=<name>] [--priority-column=<name>] [--test-strategy-column=<name>] [--dependencies-column=<name>] [--auto-sync] [--no-auto-sync] [--show] [--validate] [--init-board]',
+					desc: 'Configure Monday.com integration settings'
+				},
+				{
+					name: 'sync-monday',
+					args: '[-f, --file=<file>] [--task-id=<id>] [--dry-run] [--force]',
+					desc: 'Sync all tasks to Monday.com board'
+				},
+				{
+					name: 'monday-status',
+					args: '[-f, --file=<file>] [--verbose]',
+					desc: 'Show Monday.com sync status'
+				},
+				{
+					name: 'init-monday-sync',
+					args: '[-f, --file=<file>] [-y, --yes]',
+					desc: 'Initialize all local tasks with Monday.com sync fields (sets syncStatus to pending)'
 				}
 			]
 		}
@@ -2063,6 +2094,182 @@ function displayAiUsageSummary(telemetryData, outputType = 'cli') {
 	);
 }
 
+/**
+ * Displays the current persistence configuration
+ * @param {object} persistenceConfig - The persistence configuration object
+ * @param {object} mondayConfig - The Monday.com integration configuration object
+ */
+function displayPersistenceConfiguration(persistenceConfig, mondayConfig) {
+	if (isSilentMode()) return;
+
+	console.log(chalk.cyan.bold('\n📋 Current Persistence Configuration:'));
+	
+	// Display persistence mode with status indicator
+	const mode = persistenceConfig.mode || 'local';
+	const modeColors = {
+		local: chalk.green,
+		monday: chalk.blue,
+		hybrid: chalk.yellow
+	};
+	const modeColor = modeColors[mode] || chalk.white;
+	
+	console.log(`Mode: ${modeColor.bold(mode.toUpperCase())}`);
+	
+	// Display Monday.com integration settings if relevant
+	if (mode === 'monday' || mode === 'hybrid') {
+		console.log(chalk.cyan.bold('\n🔗 Monday.com Integration Settings:'));
+		
+		const boardStatus = mondayConfig.boardId 
+			? `${chalk.green('✅')} ${mondayConfig.boardId}`
+			: `${chalk.red('❌')} Not configured`;
+		
+		const tokenStatus = mondayConfig.apiToken 
+			? `${chalk.green('✅')} Configured`
+			: `${chalk.red('❌')} Not configured`;
+		
+		console.log(`Board ID: ${boardStatus}`);
+		console.log(`API Token: ${tokenStatus}`);
+		
+		// Display sync settings
+		const hybridConfig = persistenceConfig.persistence?.hybridConfig || {};
+		const autoSync = hybridConfig.autoSync
+			? chalk.green('Enabled')
+			: chalk.gray('Disabled');
+		const conflictResolution = hybridConfig.conflictResolution || 'manual';
+		
+		console.log(`Auto Sync: ${autoSync}`);
+		console.log(`Conflict Resolution: ${chalk.white(conflictResolution)}`);
+		
+		// Display column mapping summary
+		if (mondayConfig.columnMapping) {
+			console.log(chalk.cyan.bold('\n📊 Column Mapping:'));
+			const mapping = mondayConfig.columnMapping;
+			const mappingTable = new Table({
+				head: ['Task Field', 'Monday Column'].map(h => chalk.cyan.bold(h)),
+				colWidths: [15, 20],
+				style: { head: ['cyan', 'bold'] }
+			});
+			
+			mappingTable.push(['Status', mapping.status || 'status']);
+			mappingTable.push(['Title', mapping.title || 'name']);
+			mappingTable.push(['Description', mapping.description || 'description']);
+			mappingTable.push(['Priority', mapping.priority || 'task_priority']);
+			mappingTable.push(['Dependencies', mapping.dependencies || 'task_dependencies']);
+			
+			console.log(mappingTable.toString());
+		}
+	}
+}
+
+/**
+ * Displays persistence configuration validation results
+ * @param {object} validationResult - The validation result object with isValid and issues
+ */
+function displayPersistenceValidation(validationResult) {
+	if (isSilentMode()) return;
+
+	console.log(chalk.cyan.bold('\n🔍 Persistence Configuration Validation:'));
+	
+	if (validationResult.isValid) {
+		console.log(boxen(
+			chalk.green.bold('✅ Configuration is valid and ready to use'),
+			{
+				padding: 1,
+				borderColor: 'green',
+				borderStyle: 'round',
+				margin: { top: 1 }
+			}
+		));
+	} else {
+		console.log(boxen(
+			chalk.red.bold('❌ Configuration has issues that need attention:') + '\n\n' +
+			validationResult.issues.map(issue => chalk.red(`• ${issue}`)).join('\n'),
+			{
+				padding: 1,
+				borderColor: 'red',
+				borderStyle: 'round',
+				margin: { top: 1 }
+			}
+		));
+		
+		// Provide helpful next steps
+		console.log(chalk.yellow.bold('\n💡 Suggested Actions:'));
+		if (validationResult.issues.some(issue => issue.includes('board'))) {
+			console.log(chalk.cyan('1. Configure Monday.com board: task-master config-monday --board-id <id>'));
+		}
+		if (validationResult.issues.some(issue => issue.includes('token'))) {
+			console.log(chalk.cyan('2. Set API token: task-master config-monday --token <token>'));
+		}
+		if (validationResult.issues.some(issue => issue.includes('mode'))) {
+			console.log(chalk.cyan('3. Set valid persistence mode: task-master config-persistence --mode <local|monday|hybrid>'));
+		}
+	}
+}
+
+/**
+ * Displays persistence mode selection help
+ */
+function displayPersistenceModeHelp() {
+	if (isSilentMode()) return;
+
+	console.log(boxen(
+		chalk.white.bold('Persistence Mode Selection Guide') + '\n\n' +
+		chalk.green.bold('📁 Local Mode:') + '\n' +
+		chalk.white('• Tasks stored in local tasks.json file') + '\n' +
+		chalk.white('• No external dependencies') + '\n' +
+		chalk.white('• Best for personal projects') + '\n\n' +
+		chalk.blue.bold('☁️  Monday Mode:') + '\n' +
+		chalk.white('• Tasks stored on Monday.com board') + '\n' +
+		chalk.white('• Requires board ID and API token') + '\n' +
+		chalk.white('• Best for team collaboration') + '\n\n' +
+		chalk.yellow.bold('🔄 Hybrid Mode:') + '\n' +
+		chalk.white('• Tasks synchronized between local and Monday.com') + '\n' +
+		chalk.white('• Best of both worlds') + '\n' +
+		chalk.white('• Requires Monday.com configuration'),
+		{
+			padding: 1,
+			borderColor: 'cyan',
+			borderStyle: 'round',
+			margin: { top: 1 }
+		}
+	));
+}
+
+/**
+ * Displays persistence migration status
+ * @param {boolean} migrationPerformed - Whether migration was actually performed
+ * @param {string} mode - The current persistence mode
+ */
+function displayPersistenceMigration(migrationPerformed, mode = 'local') {
+	if (isSilentMode()) return;
+
+	if (migrationPerformed) {
+		console.log(boxen(
+			chalk.green.bold('✅ Configuration migrated successfully') + '\n\n' +
+			chalk.white('Legacy Monday.com configuration has been migrated to the new persistence structure.') + '\n' +
+			chalk.white(`Current persistence mode: ${chalk.cyan.bold(mode.toUpperCase())}`),
+			{
+				padding: 1,
+				borderColor: 'green',
+				borderStyle: 'round',
+				margin: { top: 1 }
+			}
+		));
+	} else {
+		console.log(boxen(
+			chalk.blue.bold('ℹ️  No migration needed') + '\n\n' +
+			chalk.white('Configuration is already using the current persistence structure.') + '\n' +
+			chalk.white(`Current persistence mode: ${chalk.cyan.bold(mode.toUpperCase())}`),
+			{
+				padding: 1,
+				borderColor: 'blue',
+				borderStyle: 'round',
+				margin: { top: 1 }
+			}
+		));
+	}
+}
+
 // Export UI functions
 export {
 	displayBanner,
@@ -2081,5 +2288,9 @@ export {
 	displayApiKeyStatus,
 	displayModelConfiguration,
 	displayAvailableModels,
-	displayAiUsageSummary
+	displayAiUsageSummary,
+	displayPersistenceConfiguration,
+	displayPersistenceValidation,
+	displayPersistenceModeHelp,
+	displayPersistenceMigration
 };

@@ -1,0 +1,162 @@
+# Task ID: 128
+# Title: Implement conflict detection and resolution
+# Status: pending
+# Dependencies: 127
+# Priority: high
+# Description: Create a system for detecting and resolving conflicts when the same task is modified in both systems, with support for different resolution strategies.
+# Details:
+1. Implement conflict detection using timestamps and content hashes
+2. Add support for different conflict resolution strategies: manual, local-wins, monday-wins
+3. Create CLI commands for viewing and resolving conflicts
+4. Implement conflict resolution logic in the sync engine
+5. Add conflict status tracking and reporting
+
+Implementation details:
+```javascript
+// In monday-sync.js
+async function detectConflicts() {
+  const tasks = await this.localStorage.loadTasks();
+  const conflicts = [];
+  
+  for (const task of tasks) {
+    if (!task.mondayItemId) continue;
+    
+    try {
+      // Get the latest version from Monday
+      const mondayItem = await this.mondayClient.getItem(
+        this.config.getMondayBoardId(),
+        task.mondayItemId
+      );
+      
+      if (!mondayItem) continue;
+      
+      const mondayUpdatedAt = new Date(mondayItem.updated_at).toISOString();
+      
+      // If both sides have been updated since last sync, we have a conflict
+      if (
+        task.lastModifiedLocal && 
+        task.lastModifiedMonday &&
+        new Date(task.lastModifiedLocal) > new Date(task.lastSyncedAt || 0) &&
+        new Date(mondayUpdatedAt) > new Date(task.lastModifiedMonday)
+      ) {
+        // Map Monday item to task format for comparison
+        const mondayTask = this._mapMondayItemToTask(mondayItem);
+        
+        conflicts.push({
+          id: `conflict-${task.id}`,
+          taskId: task.id,
+          mondayItemId: task.mondayItemId,
+          localTask: task,
+          mondayTask: mondayTask,
+          lastSyncedAt: task.lastSyncedAt
+        });
+        
+        // Mark task as having a conflict
+        await this.localStorage.markTaskAsConflict(task.id, mondayTask);
+      }
+    } catch (error) {
+      console.error(`Error checking conflicts for task ${task.id}:`, error);
+    }
+  }
+  
+  return conflicts;
+}
+
+async function resolveConflict(conflictId, strategy) {
+  // Extract task ID from conflict ID
+  const taskId = parseInt(conflictId.replace('conflict-', ''));
+  const task = await this.localStorage.getTaskById(taskId);
+  
+  if (!task || task.syncStatus !== 'conflict') {
+    throw new Error(`No conflict found for task ${taskId}`);
+  }
+  
+  switch (strategy) {
+    case 'local-wins':
+      // Push local version to Monday
+      await this.pushTaskToMonday(task, { force: true });
+      break;
+      
+    case 'monday-wins':
+      // Pull Monday version to local
+      await this.pullTaskFromMonday(task.mondayItemId, { force: true });
+      break;
+      
+    case 'manual':
+      // Keep conflict status, will be resolved manually
+      return { success: false, message: 'Manual resolution required' };
+      
+    default:
+      throw new Error(`Unknown conflict resolution strategy: ${strategy}`);
+  }
+  
+  return { success: true, strategy };
+}
+
+// Add to commands.js
+async function handleSyncConflicts(args) {
+  if (args._[2] === 'conflicts') {
+    // List conflicts
+    const conflicts = await mondaySyncEngine.detectConflicts();
+    
+    if (conflicts.length === 0) {
+      console.log('No conflicts detected.');
+      return;
+    }
+    
+    console.log(`Found ${conflicts.length} conflicts:`);
+    for (const conflict of conflicts) {
+      console.log(`\nConflict ID: ${conflict.id}`);
+      console.log(`Task ID: ${conflict.taskId}, Monday Item ID: ${conflict.mondayItemId}`);
+      console.log('Local changes:');
+      console.log(JSON.stringify(conflict.localTask, null, 2));
+      console.log('Monday changes:');
+      console.log(JSON.stringify(conflict.mondayTask, null, 2));
+      console.log(`Last synced: ${conflict.lastSyncedAt || 'never'}`);
+    }
+    
+    console.log('\nResolve conflicts with:');
+    console.log('task-master sync resolve --conflict-id=X --strategy=local|monday|manual');
+  } else if (args._[2] === 'resolve') {
+    // Resolve a conflict
+    const conflictId = args['--conflict-id'];
+    const strategy = args['--strategy'];
+    
+    if (!conflictId) {
+      console.error('Missing required argument: --conflict-id');
+      return;
+    }
+    
+    if (!strategy || !['local', 'monday', 'manual'].includes(strategy)) {
+      console.error('Missing or invalid strategy. Must be one of: local, monday, manual');
+      return;
+    }
+    
+    try {
+      const result = await mondaySyncEngine.resolveConflict(conflictId, strategy);
+      
+      if (result.success) {
+        console.log(`Conflict ${conflictId} resolved using ${strategy} strategy.`);
+      } else {
+        console.log(result.message);
+      }
+    } catch (error) {
+      console.error('Error resolving conflict:', error.message);
+    }
+  }
+}
+```
+
+# Test Strategy:
+1. Unit test conflict detection with various task scenarios
+2. Test different conflict resolution strategies
+3. Verify conflict status tracking and reporting
+4. Test CLI commands for viewing and resolving conflicts
+5. Integration test with actual Monday.com API
+6. Test complex conflict scenarios with multiple changes
+7. Verify conflict resolution with different strategies
+8. Test error handling and recovery
+9. Run command tests:
+   - `task-master sync conflicts`
+   - `task-master sync resolve --conflict-id=conflict-1 --strategy=local`
+   - `task-master sync resolve --conflict-id=conflict-1 --strategy=monday`

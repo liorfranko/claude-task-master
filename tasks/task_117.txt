@@ -1,0 +1,267 @@
+# Task ID: 117
+# Title: Implement Comprehensive Testing Suite
+# Status: pending
+# Dependencies: 108, 110, 111, 114, 116
+# Priority: medium
+# Description: Create a comprehensive testing suite for all persistence modes, sync operations, and error scenarios.
+# Details:
+Implement a comprehensive testing suite that:  
+1. Tests all persistence modes: local, Monday, hybrid  
+2. Tests all sync operations and commands  
+3. Tests error handling and recovery  
+4. Tests offline scenarios  
+5. Tests conflict detection and resolution  
+6. Includes unit tests, integration tests, and end-to-end tests  
+
+Implementation:  
+```javascript
+// tests/persistence-manager.test.js
+const { expect } = require('chai');
+const sinon = require('sinon');
+const persistenceManager = require('../scripts/modules/persistence-manager');
+
+describe('Persistence Manager', () => {
+  let mockLocalProvider;
+  let mockMondayProvider;
+  let mockHybridProvider;
+  
+  beforeEach(() => {
+    // Create mock providers
+    mockLocalProvider = {
+      getTasks: sinon.stub().resolves([{ id: 1, title: 'Test Task' }]),
+      getTask: sinon.stub().resolves({ id: 1, title: 'Test Task' }),
+      createTask: sinon.stub().resolves({ id: 2, title: 'New Task' }),
+      updateTask: sinon.stub().resolves({ id: 1, title: 'Updated Task' }),
+      deleteTask: sinon.stub().resolves(true)
+    };
+    
+    mockMondayProvider = {
+      getTasks: sinon.stub().resolves([{ id: 1, title: 'Monday Task', mondayItemId: 'm1' }]),
+      getTask: sinon.stub().resolves({ id: 1, title: 'Monday Task', mondayItemId: 'm1' }),
+      createTask: sinon.stub().resolves({ id: 2, title: 'New Monday Task', mondayItemId: 'm2' }),
+      updateTask: sinon.stub().resolves({ id: 1, title: 'Updated Monday Task', mondayItemId: 'm1' }),
+      deleteTask: sinon.stub().resolves(true)
+    };
+    
+    mockHybridProvider = {
+      getTasks: sinon.stub().resolves([{ id: 1, title: 'Hybrid Task', mondayItemId: 'm1' }]),
+      getTask: sinon.stub().resolves({ id: 1, title: 'Hybrid Task', mondayItemId: 'm1' }),
+      createTask: sinon.stub().resolves({ id: 2, title: 'New Hybrid Task', mondayItemId: 'm2' }),
+      updateTask: sinon.stub().resolves({ id: 1, title: 'Updated Hybrid Task', mondayItemId: 'm1' }),
+      deleteTask: sinon.stub().resolves(true)
+    };
+    
+    // Register mock providers
+    persistenceManager.registerProvider('local', mockLocalProvider);
+    persistenceManager.registerProvider('monday', mockMondayProvider);
+    persistenceManager.registerProvider('hybrid', mockHybridProvider);
+  });
+  
+  afterEach(() => {
+    sinon.restore();
+  });
+  
+  describe('Provider Selection', () => {
+    it('should use local provider when mode is local', async () => {
+      persistenceManager.setMode('local');
+      await persistenceManager.getTasks();
+      expect(mockLocalProvider.getTasks.called).to.be.true;
+      expect(mockMondayProvider.getTasks.called).to.be.false;
+      expect(mockHybridProvider.getTasks.called).to.be.false;
+    });
+    
+    it('should use monday provider when mode is monday', async () => {
+      persistenceManager.setMode('monday');
+      await persistenceManager.getTasks();
+      expect(mockLocalProvider.getTasks.called).to.be.false;
+      expect(mockMondayProvider.getTasks.called).to.be.true;
+      expect(mockHybridProvider.getTasks.called).to.be.false;
+    });
+    
+    it('should use hybrid provider when mode is hybrid', async () => {
+      persistenceManager.setMode('hybrid');
+      await persistenceManager.getTasks();
+      expect(mockLocalProvider.getTasks.called).to.be.false;
+      expect(mockMondayProvider.getTasks.called).to.be.false;
+      expect(mockHybridProvider.getTasks.called).to.be.true;
+    });
+  });
+  
+  // More tests for CRUD operations, error handling, etc.
+});
+
+// tests/monday-client.test.js
+describe('Monday Client', () => {
+  let mondayClient;
+  let mockGraphQLClient;
+  
+  beforeEach(() => {
+    // Mock GraphQL client
+    mockGraphQLClient = {
+      request: sinon.stub().resolves({ data: { me: { name: 'Test User' } } })
+    };
+    
+    // Replace the real GraphQL client with the mock
+    sinon.stub(require('graphql-request'), 'GraphQLClient').returns(mockGraphQLClient);
+    
+    // Create a fresh instance for each test
+    mondayClient = require('../scripts/modules/monday-client');
+  });
+  
+  afterEach(() => {
+    sinon.restore();
+  });
+  
+  describe('API Interactions', () => {
+    it('should test connection successfully', async () => {
+      const result = await mondayClient.testConnection();
+      expect(result).to.deep.equal({ data: { me: { name: 'Test User' } } });
+      expect(mockGraphQLClient.request.calledOnce).to.be.true;
+    });
+    
+    it('should handle rate limiting', async () => {
+      // First call throws a rate limit error, second succeeds
+      mockGraphQLClient.request.onFirstCall().rejects({
+        response: { status: 429, headers: { 'retry-after': '1' } }
+      });
+      mockGraphQLClient.request.onSecondCall().resolves({ data: { me: { name: 'Test User' } } });
+      
+      const result = await mondayClient.testConnection();
+      expect(result).to.deep.equal({ data: { me: { name: 'Test User' } } });
+      expect(mockGraphQLClient.request.calledTwice).to.be.true;
+    });
+    
+    it('should handle offline scenarios', async () => {
+      // Simulate network error
+      mockGraphQLClient.request.rejects(new Error('ECONNREFUSED'));
+      
+      try {
+        await mondayClient.testConnection();
+        expect.fail('Should have thrown an error');
+      } catch (error) {
+        expect(error.message).to.include('offline');
+        expect(mondayClient.isOffline).to.be.true;
+        expect(mondayClient.offlineQueue.length).to.equal(1);
+      }
+    });
+  });
+  
+  // More tests for board operations, error handling, etc.
+});
+
+// Integration tests
+describe('Integration Tests', () => {
+  // These tests require a real Monday.com API token and board
+  // They should be skipped in CI environments
+  
+  before(function() {
+    if (!process.env.MONDAY_API_TOKEN) {
+      this.skip();
+    }
+  });
+  
+  it('should connect to Monday.com API', async () => {
+    const mondayClient = require('../scripts/modules/monday-client');
+    const result = await mondayClient.testConnection();
+    expect(result.data.me).to.have.property('name');
+  });
+  
+  it('should get board information', async () => {
+    const mondayClient = require('../scripts/modules/monday-client');
+    const result = await mondayClient.getBoard(9275265350);
+    expect(result.data.boards).to.be.an('array');
+    expect(result.data.boards[0]).to.have.property('id');
+    expect(result.data.boards[0]).to.have.property('name');
+    expect(result.data.boards[0]).to.have.property('columns');
+  });
+  
+  // More integration tests for CRUD operations, sync, etc.
+});
+```
+
+Implement end-to-end tests:  
+```javascript
+// tests/e2e/monday-integration.test.js
+const { expect } = require('chai');
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+describe('End-to-End Tests', () => {
+  // These tests require a real Monday.com API token and board
+  // They should be skipped in CI environments
+  
+  before(function() {
+    if (!process.env.MONDAY_API_TOKEN) {
+      this.skip();
+    }
+    
+    // Set up test environment
+    execSync('task-master config --set-mode=local');
+    
+    // Clear existing tasks
+    const tasksFile = path.join(process.cwd(), 'tasks.json');
+    if (fs.existsSync(tasksFile)) {
+      fs.writeFileSync(tasksFile, '[]');
+    }
+  });
+  
+  after(function() {
+    // Clean up
+    execSync('task-master config --set-mode=local');
+  });
+  
+  it('should add a task in local mode', () => {
+    const output = execSync('task-master add-task --prompt="Test local task"').toString();
+    expect(output).to.include('added');
+    
+    const listOutput = execSync('task-master list').toString();
+    expect(listOutput).to.include('Test local task');
+  });
+  
+  it('should push local task to Monday', () => {
+    const output = execSync('task-master update-monday-from-local').toString();
+    expect(output).to.include('Sync results');
+    expect(output).to.include('Created:');
+  });
+  
+  it('should switch to Monday mode', () => {
+    const output = execSync('task-master config --set-mode=monday --board-id=9275265350').toString();
+    expect(output).to.include('Persistence mode set to: monday');
+  });
+  
+  it('should list tasks in Monday mode', () => {
+    const output = execSync('task-master list').toString();
+    expect(output).to.include('Test local task');
+  });
+  
+  it('should add a task in Monday mode', () => {
+    const output = execSync('task-master add-task --prompt="Test Monday task"').toString();
+    expect(output).to.include('added');
+    
+    const listOutput = execSync('task-master list').toString();
+    expect(listOutput).to.include('Test Monday task');
+  });
+  
+  it('should switch to hybrid mode', () => {
+    const output = execSync('task-master config --set-mode=hybrid').toString();
+    expect(output).to.include('Persistence mode set to: hybrid');
+  });
+  
+  it('should sync tasks in hybrid mode', () => {
+    const output = execSync('task-master sync status').toString();
+    expect(output).to.include('Sync Status');
+  });
+  
+  // More end-to-end tests for all commands and modes
+});
+```
+
+# Test Strategy:
+1. Run unit tests for all components with mock providers  
+2. Run integration tests with real Monday.com API using test board 9275265350  
+3. Run end-to-end tests for all CLI commands and modes  
+4. Test offline scenarios by disconnecting from the network  
+5. Test conflict scenarios by modifying the same task in both systems  
+6. Test performance with large task sets  
+7. Test error handling and recovery from various failure scenarios

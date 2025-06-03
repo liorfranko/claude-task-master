@@ -13,7 +13,7 @@ import http from 'http';
 import inquirer from 'inquirer';
 import ora from 'ora'; // Import ora
 
-import { log, readJSON } from './utils.js';
+import { log, readJSON, writeJSON } from './utils.js';
 import {
 	parsePRD,
 	updateTasks,
@@ -50,7 +50,17 @@ import {
 	ConfigurationError,
 	isConfigFilePresent,
 	getAvailableModels,
-	getBaseUrlForRole
+	getBaseUrlForRole,
+	getMondayApiToken,
+	validateMondayConfigWithBoardInfo,
+	getMondayIntegrationConfig,
+	updateMondayConfig,
+	getMondayColumnMapping,
+	getPersistenceConfig,
+	getPersistenceMode,
+	setPersistenceMode,
+	validatePersistenceConfig,
+	migrateMondayIntegrationToPersistence
 } from './config-manager.js';
 
 import {
@@ -66,9 +76,14 @@ import {
 	displayModelConfiguration,
 	displayAvailableModels,
 	displayApiKeyStatus,
-	displayAiUsageSummary
+	displayAiUsageSummary,
+	displayPersistenceConfiguration,
+	displayPersistenceValidation,
+	displayPersistenceModeHelp,
+	displayPersistenceMigration
 } from './ui.js';
 
+import { MondayClient } from './monday-client.js';
 import { initializeProject } from '../init.js';
 import {
 	getModelConfiguration,
@@ -2491,6 +2506,359 @@ Examples:
 			return; // Stop execution here
 		});
 
+	// Monday.com Configuration Command
+	programInstance
+		.command('config-monday')
+		.alias('monday')
+		.description('Configure Monday.com integration settings')
+		.option('--board-id <id>', 'Set Monday.com board ID')
+		.option('--token <token>', 'Set Monday.com API token')
+		.option('--status-column <name>', 'Set status column name (default: status)')
+		.option('--name-column <name>', 'Set name column name (default: name)')
+		.option('--notes-column <name>', 'Set notes column name (default: notes)')
+		.option('--details-column <name>', 'Set details column name (default: details)')
+		.option('--task-id-column <name>', 'Set task ID column name (default: task_id)')
+		.option('--priority-column <name>', 'Set priority column name (default: priority)')
+		.option('--test-strategy-column <name>', 'Set test strategy column name (default: test_strategy)')
+		.option('--dependencies-column <name>', 'Set dependencies column name (default: dependencies)')
+		.option('--auto-sync', 'Enable automatic sync')
+		.option('--no-auto-sync', 'Disable automatic sync')
+		.option('--show', 'Show current Monday.com configuration')
+		.option('--validate', 'Validate Monday.com configuration and connection')
+		.option('--init-board', 'Initialize Monday.com board by creating missing columns for Task Master integration')
+		.action(async (options) => {
+			try {
+
+
+				// Show current configuration
+				if (options.show) {
+					const config = getMondayIntegrationConfig();
+					console.log('\n📋 Monday.com Configuration:');
+					console.log(`  Board ID: ${config.boardId || 'Not set'}`);
+					console.log(`  API Token: ${config.apiToken ? '***set***' : 'Not set'}`);
+					console.log('\n📊 Column Mapping:');
+					console.log(`  Status: ${config.columnMapping.status}`);
+					console.log(`  Name: ${config.columnMapping.name}`);
+					console.log(`  Notes: ${config.columnMapping.notes}`);
+					console.log(`  Details: ${config.columnMapping.details}`);
+					console.log(`  Task ID: ${config.columnMapping.taskId}`);
+					console.log(`  Priority: ${config.columnMapping.priority}`);
+					console.log(`  Test Strategy: ${config.columnMapping.testStrategy}`);
+					console.log(`  Dependencies: ${config.columnMapping.dependencies}`);
+					console.log('\n⚙️ Sync Settings:');
+					console.log(`  Auto-sync: ${config.syncSettings.autoSync ? 'Enabled' : 'Disabled'}`);
+					return;
+				}
+
+				// Initialize board by creating missing columns
+				if (options.initBoard) {
+					
+					const config = getMondayIntegrationConfig();
+					
+					if (!config.boardId) {
+						console.error('❌ Board ID is required for board initialization. Set it first with --board-id=<id>');
+						process.exit(1);
+					}
+					
+					const apiToken = getMondayApiToken();
+					if (!apiToken) {
+						console.error('❌ Monday.com API token is required. Set MONDAY_API_TOKEN environment variable or use --token=<token>');
+						process.exit(1);
+					}
+					
+					console.log('🔧 Initializing Monday.com board for Task Master integration...');
+					console.log(`📋 Board ID: ${config.boardId}`);
+					
+					const client = new MondayClient(apiToken);
+					const result = await client.createMissingTaskMasterColumns(config.boardId);
+					
+					if (result.success) {
+						console.log('\n✅ Board initialization completed successfully!');
+						const { created, skipped, failed, updated, summary } = result.data;
+						
+						if (created.length > 0) {
+							console.log('\n📝 Created columns:');
+							created.forEach(({ purpose, column }) => {
+								console.log(`  ✅ ${purpose}: "${column.title}" (ID: ${column.id}, Type: ${column.type})`);
+							});
+						}
+						
+						if (updated.length > 0) {
+							console.log('\n🔄 Updated columns:');
+							updated.forEach(({ purpose, column, action }) => {
+								console.log(`  🔄 ${purpose}: "${column.title}" (ID: ${column.id}) - ${action}`);
+							});
+						}
+						
+						if (skipped.length > 0) {
+							console.log('\n⚠️ Skipped columns (already exist):');
+							skipped.forEach(({ purpose, column, reason, note }) => {
+								console.log(`  ⏭️ ${purpose}: "${column.title}" (ID: ${column.id}) - ${reason}`);
+								if (note) {
+									console.log(`    ↳ ${note}`);
+								}
+							});
+						}
+						
+						if (failed.length > 0) {
+							console.log('\n❌ Failed columns:');
+							failed.forEach(({ purpose, title, error }) => {
+								console.log(`  ❌ ${purpose}: "${title}" - ${error}`);
+							});
+						}
+						
+						console.log(`\n📊 Summary: ${summary.created} created, ${summary.updated} updated, ${summary.skipped} skipped, ${summary.failed} failed`);
+						
+						// Automatically update configuration with new column IDs
+						if (created.length > 0 || updated.length > 0) {
+							console.log('\n🔄 Updating Task Master configuration with column IDs...');
+							const columnMapping = {};
+							
+							// Handle created columns
+							created.forEach(({ purpose, column }) => {
+								if (purpose === 'details') {
+									columnMapping.details = column.id;
+								} else if (purpose === 'taskId') {
+									columnMapping.taskId = column.id;
+								} else if (purpose === 'priority') {
+									columnMapping.priority = column.id;
+								} else if (purpose === 'testStrategy') {
+									columnMapping.testStrategy = column.id;
+								} else if (purpose === 'dependencies') {
+									columnMapping.dependencies = column.id;
+								}
+							});
+							
+							// Handle updated columns (ensure they're in the mapping)
+							updated.forEach(({ purpose, column }) => {
+								if (purpose === 'details') {
+									columnMapping.details = column.id;
+								} else if (purpose === 'taskId') {
+									columnMapping.taskId = column.id;
+								} else if (purpose === 'priority') {
+									columnMapping.priority = column.id;
+								} else if (purpose === 'testStrategy') {
+									columnMapping.testStrategy = column.id;
+								} else if (purpose === 'dependencies') {
+									columnMapping.dependencies = column.id;
+								}
+							});
+							
+							if (Object.keys(columnMapping).length > 0) {
+								updateMondayConfig({ columnMapping });
+								console.log('✅ Configuration updated with column mappings:');
+								Object.entries(columnMapping).forEach(([key, value]) => {
+									console.log(`  ${key}: ${value}`);
+								});
+							}
+						}
+						
+						console.log('\n🏷️ Available Priority Values for Task Master integration:');
+						console.log('  • High (maps to high priority tasks)');
+						console.log('  • Medium (maps to medium priority tasks)');
+						console.log('  • Low (maps to low priority tasks)');
+						console.log('');
+						console.log('  📋 The priority dropdown has been configured with these labels.');
+						console.log('  💡 Tasks will automatically map to these values during sync.');
+						
+						if (failed.length === 0) {
+							console.log('\n🎉 Your Monday.com board is now ready for Task Master integration!');
+							console.log('💡 You can run "task-master config-monday --validate" to verify everything is working.');
+						} else {
+							console.log('\n⚠️ Board initialization completed with some issues. Please review the failed columns above.');
+						}
+					} else {
+						console.error(`❌ Board initialization failed: ${result.error}`);
+						process.exit(1);
+					}
+					
+					return;
+				}
+
+				// Validate configuration
+				if (options.validate) {
+					const validation = await validateMondayConfigWithBoardInfo(null, null, true);
+					
+					if (validation.valid) {
+						console.log('✅ Monday.com configuration is valid');
+						console.log(`📋 Connected to board: ${validation.boardName} (ID: ${validation.boardId})`);
+						
+						if (validation.boardInfo && validation.boardInfo.columns) {
+							console.log('\n📊 Available Board Columns:');
+							validation.boardInfo.columns.forEach(column => {
+								console.log(`  - Column ID: "${column.id}"`);
+								console.log(`    Title: ${column.title}`);
+								console.log(`    Type: ${column.type}`);
+								console.log('');
+							});
+							
+							console.log('🔧 Current Column Mapping:');
+							const columnMapping = getMondayColumnMapping();
+							Object.entries(columnMapping).forEach(([key, value]) => {
+								const columnExists = validation.boardInfo.columns.find(col => col.id === value);
+								const status = columnExists ? '✅' : '❌';
+								console.log(`  ${key}: "${value}" ${status}`);
+								if (!columnExists) {
+									console.log(`    ↳ Column "${value}" not found on board`);
+								}
+							});
+						}
+					} else {
+						console.error('❌ Monday.com configuration is invalid:');
+						validation.errors.forEach(error => console.error(`  - ${error}`));
+						
+						// If we have board info despite errors, show available columns
+						if (validation.boardInfo && validation.boardInfo.columns) {
+							console.log('\n📊 Available Board Columns (for reference):');
+							validation.boardInfo.columns.forEach(column => {
+								console.log(`  - Column ID: "${column.id}" (${column.title})`);
+							});
+						}
+						process.exit(1);
+					}
+					return;
+				}
+
+				// Update configuration
+				const updates = {};
+				
+				if (options.boardId) updates.boardId = options.boardId;
+				if (options.token) updates.apiToken = options.token;
+				
+				// Column mapping updates
+				const columnMapping = {};
+				if (options.statusColumn) columnMapping.status = options.statusColumn;
+				if (options.nameColumn) columnMapping.name = options.nameColumn;
+				if (options.notesColumn) columnMapping.notes = options.notesColumn;
+				if (options.detailsColumn) columnMapping.details = options.detailsColumn;
+				if (options.taskIdColumn) columnMapping.taskId = options.taskIdColumn;
+				if (options.priorityColumn) columnMapping.priority = options.priorityColumn;
+				if (options.testStrategyColumn) columnMapping.testStrategy = options.testStrategyColumn;
+				if (options.dependenciesColumn) columnMapping.dependencies = options.dependenciesColumn;
+				if (Object.keys(columnMapping).length > 0) {
+					updates.columnMapping = columnMapping;
+				}
+
+				// Auto-sync setting
+				if (options.autoSync === true) updates.autoSync = true;
+				if (options.autoSync === false) updates.autoSync = false;
+
+				if (Object.keys(updates).length === 0) {
+					console.log('No configuration changes specified. Use --show to view current settings.');
+					return;
+				}
+
+				updateMondayConfig(updates);
+				console.log('✅ Monday.com configuration updated successfully');
+
+				// Show what was updated
+				if (updates.boardId) console.log(`📋 Board ID set to: ${updates.boardId}`);
+				if (updates.apiToken) console.log('🔑 API token updated');
+				if (updates.columnMapping) {
+					console.log('📊 Column mapping updated:');
+					Object.entries(updates.columnMapping).forEach(([key, value]) => {
+						console.log(`  ${key}: ${value}`);
+					});
+				}
+				if (updates.autoSync !== undefined) {
+					console.log(`⚙️ Auto-sync: ${updates.autoSync ? 'Enabled' : 'Disabled'}`);
+				}
+
+			} catch (error) {
+				console.error('❌ Error configuring Monday.com integration:', error.message);
+				process.exit(1);
+			}
+		});
+
+	// Persistence configuration command
+	programInstance
+		.command('config-persistence')
+		.alias('persistence')
+		.description('Configure Task Master persistence mode and settings')
+		.option('--mode <mode>', 'Set persistence mode (local, monday, hybrid)')
+		.option('--show', 'Show current persistence configuration')
+		.option('--validate', 'Validate persistence configuration')
+		.option('--migrate', 'Migrate legacy Monday.com configuration to persistence structure')
+		.action(async (options) => {
+			try {
+
+				// Show current configuration
+				if (options.show) {
+					const config = getPersistenceConfig();
+					const mondayConfig = getMondayIntegrationConfig();
+					displayPersistenceConfiguration(config, mondayConfig);
+					return;
+				}
+
+				// Validate configuration
+				if (options.validate) {
+					console.log('🔍 Validating persistence configuration...');
+					const validation = await validatePersistenceConfig();
+					displayPersistenceValidation(validation);
+					return;
+				}
+
+				// Migrate legacy configuration
+				if (options.migrate) {
+					console.log('🔄 Migrating legacy Monday.com configuration...');
+					const migrated = migrateMondayIntegrationToPersistence();
+					const currentMode = getPersistenceMode();
+					displayPersistenceMigration(migrated, currentMode);
+					return;
+				}
+
+				// Set persistence mode
+				if (options.mode) {
+					const validModes = ['local', 'monday', 'hybrid'];
+					if (!validModes.includes(options.mode)) {
+						console.error(`❌ Invalid persistence mode: ${options.mode}`);
+						console.error(`Valid modes: ${validModes.join(', ')}`);
+						process.exit(1);
+					}
+
+					console.log(`🔄 Setting persistence mode to: ${options.mode}`);
+					const success = setPersistenceMode(options.mode);
+					
+					if (success) {
+						console.log('✅ Persistence mode updated successfully');
+						
+						// Show helpful next steps for Monday.com modes
+						if (options.mode === 'monday' || options.mode === 'hybrid') {
+							console.log('\n💡 Next steps for Monday.com integration:');
+							console.log('1. Configure Monday.com settings: task-master config-monday --board-id <id> --token <token>');
+							console.log('2. Validate the configuration: task-master config-persistence --validate');
+						}
+					} else {
+						console.error('❌ Failed to update persistence mode');
+						process.exit(1);
+					}
+					return;
+				}
+
+				// If no options provided, show help and mode selection guide
+				displayPersistenceModeHelp();
+				console.log('\nUsage: task-master config-persistence [options]');
+				console.log('');
+				console.log('Options:');
+				console.log('  --mode <mode>     Set persistence mode (local, monday, hybrid)');
+				console.log('  --show           Show current persistence configuration');
+				console.log('  --validate       Validate persistence configuration');
+				console.log('  --migrate        Migrate legacy configuration');
+				console.log('');
+				console.log('Examples:');
+				console.log('  task-master config-persistence --mode monday');
+				console.log('  task-master config-persistence --show');
+				console.log('  task-master config-persistence --validate');
+				
+			} catch (error) {
+				console.error('❌ Error managing persistence configuration:', error.message);
+				if (getDebugFlag()) {
+					console.error('Error details:', error);
+				}
+				process.exit(1);
+			}
+		});
+
 	// move-task command
 	programInstance
 		.command('move')
@@ -2617,6 +2985,513 @@ Examples:
 					console.error(chalk.red(`Error: ${error.message}`));
 					process.exit(1);
 				}
+			}
+		});
+
+	// Monday.com Sync Commands
+	programInstance
+		.command('sync-monday')
+		.description('Sync all tasks to Monday.com board')
+		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('--task-id <id>', 'Sync only a specific task by ID')
+		.option('--dry-run', 'Show what would be synced without making changes')
+		.option('--force', 'Clear all sync data and resync all tasks from scratch')
+		.action(async (options) => {
+			try {
+				const projectRoot = findProjectRoot();
+				if (!projectRoot) {
+					console.error(chalk.red('Error: Could not find project root directory'));
+					process.exit(1);
+				}
+
+
+
+				// Check if Monday.com integration is configured
+				const config = getMondayIntegrationConfig(projectRoot);
+				if (!config || !config.boardId) {
+					console.error(chalk.red('Error: Monday.com integration not configured.'));
+					console.log(chalk.yellow('Run "task-master config-monday" first to configure the integration.'));
+					process.exit(1);
+				}
+
+				// Check if API token is available
+				const token = getMondayApiToken(projectRoot);
+				if (!token) {
+					console.error(chalk.red('Error: Monday.com API token not found.'));
+					console.log(chalk.yellow('Set MONDAY_API_TOKEN environment variable or configure via "task-master config-monday --token=YOUR_TOKEN"'));
+					process.exit(1);
+				}
+
+				const tasksPath = path.resolve(options.file);
+				if (!fs.existsSync(tasksPath)) {
+					console.error(chalk.red(`Error: Tasks file not found at ${tasksPath}`));
+					process.exit(1);
+				}
+
+				const tasks = readJSON(tasksPath);
+				if (!tasks || !tasks.tasks) {
+					console.error(chalk.red('Error: Invalid tasks file format'));
+					process.exit(1);
+				}
+
+				// Handle force option - clear all Monday sync data to start fresh
+				if (options.force) {
+					console.log(chalk.yellow('🔄 Force mode: Clearing all Monday sync data and resyncing from scratch...\n'));
+					
+					// Clear Monday sync data from all tasks and subtasks
+					tasks.tasks.forEach(task => {
+						// Clear task sync data and mark as pending
+						delete task.mondayItemId;
+						task.syncStatus = 'pending';  // Mark as pending so it gets picked up by sync
+						delete task.syncError;
+						delete task.lastSyncedAt;
+						delete task.lastModifiedMonday;
+						
+						// Clear subtask sync data and mark as pending
+						if (task.subtasks && Array.isArray(task.subtasks)) {
+							task.subtasks.forEach(subtask => {
+								delete subtask.mondayItemId;
+								subtask.syncStatus = 'pending';  // Mark as pending so it gets picked up by sync--all
+								delete subtask.syncError;
+								delete subtask.lastSyncedAt;
+								delete subtask.lastModifiedMonday;
+							});
+						}
+					});
+					
+					// Save the cleaned tasks file
+					writeJSON(tasksPath, tasks);
+					console.log(chalk.green('✅ Cleared all Monday sync data from tasks.json'));
+				}
+
+				// Handle dry run mode
+				if (options.dryRun) {
+					console.log(chalk.blue('🔍 Dry run mode - no changes will be made to Monday.com\n'));
+					
+					if (options.taskId) {
+						const taskId = parseInt(options.taskId);
+						const task = tasks.tasks.find(t => t.id === taskId);
+						if (task) {
+							console.log(chalk.green(`Would sync task ${task.id}: ${task.title}`));
+							if (task.mondayItemId && !options.force) {
+								console.log(chalk.yellow(`  → Update existing Monday item ${task.mondayItemId}`));
+							} else {
+								console.log(chalk.blue('  → Create new Monday item'));
+							}
+							
+							// Check subtasks if they exist
+							if (task.subtasks && task.subtasks.length > 0) {
+								const subtasksNeedingSync = options.force ? task.subtasks : task.subtasks.filter(st => 
+									st.syncStatus === 'pending' || st.syncStatus === 'error' || !st.hasOwnProperty('syncStatus')
+								);
+								if (subtasksNeedingSync.length > 0) {
+									console.log(chalk.blue(`  → Would also sync ${subtasksNeedingSync.length} subtasks`));
+									subtasksNeedingSync.forEach(subtask => {
+										console.log(chalk.blue(`    - Subtask ${task.id}.${subtask.id}: ${subtask.title}`));
+									});
+								}
+							}
+						} else {
+							console.error(chalk.red(`Task with ID ${options.taskId} not found`));
+							process.exit(1);
+						}
+					} else {
+						// In force mode, sync everything; otherwise use getTasksNeedingSync
+						let itemsToSync;
+						if (options.force) {
+							// Count all tasks and subtasks for force mode
+							itemsToSync = [];
+							tasks.tasks.forEach(task => {
+								itemsToSync.push({ type: 'task', id: task.id, task });
+								if (task.subtasks && Array.isArray(task.subtasks)) {
+									task.subtasks.forEach(subtask => {
+										itemsToSync.push({ 
+											type: 'subtask', 
+											id: `${task.id}.${subtask.id}`, 
+											task: subtask, 
+											parentId: task.id 
+										});
+									});
+								}
+							});
+						} else {
+							itemsToSync = getTasksNeedingSync(tasksPath);
+						}
+						
+						console.log(chalk.green(`Would sync ${itemsToSync.length} items${options.force ? ' (all tasks and subtasks)' : ' that need syncing'}:`));
+						itemsToSync.forEach(item => {
+							if (item.type === 'task') {
+								console.log(chalk.blue(`  - Task ${item.id}: ${item.task.title}`));
+							} else {
+								console.log(chalk.blue(`  - Subtask ${item.id}: ${item.task.title}`));
+							}
+						});
+						
+						if (itemsToSync.length === 0 && !options.force) {
+							console.log(chalk.green('✅ All tasks and subtasks are already synced - nothing to do!'));
+						}
+					}
+					return;
+				}
+
+				// Create sync engine
+				let syncEngine;
+				try {
+					syncEngine = createMondaySyncEngine(projectRoot);
+				} catch (error) {
+					console.error(chalk.red(`Error creating sync engine: ${error.message}`));
+					process.exit(1);
+				}
+
+				// Perform actual sync
+				const spinner = ora('Initializing Monday.com sync...').start();
+
+				try {
+					if (options.taskId) {
+						// Sync specific task
+						const taskId = parseInt(options.taskId);
+						const task = tasks.tasks.find(t => t.id === taskId);
+						
+						if (!task) {
+							spinner.fail(chalk.red(`Task with ID ${options.taskId} not found`));
+							process.exit(1);
+						}
+
+						spinner.text = `Syncing task ${taskId} to Monday.com...`;
+						const result = await syncEngine.syncTask(task, tasksPath, taskId.toString());
+						
+						if (result.success) {
+							spinner.succeed(chalk.green(`✅ Task ${taskId} synced successfully to Monday item ${result.mondayItemId}`));
+						} else {
+							spinner.fail(chalk.red(`❌ Error syncing task ${taskId}: ${result.error}`));
+							process.exit(1);
+						}
+					} else {
+						// In force mode, sync everything; otherwise only sync tasks that need syncing
+						let itemsToSync;
+						if (options.force) {
+							// Force mode - sync all tasks
+							spinner.text = 'Force mode: Syncing all tasks to Monday.com...';
+						} else {
+							itemsToSync = getTasksNeedingSync(tasksPath);
+							
+							if (itemsToSync.length === 0) {
+								spinner.succeed(chalk.green('✅ All tasks and subtasks are already synced - nothing to sync!'));
+								return;
+							}
+							spinner.text = `Syncing ${itemsToSync.length} items to Monday.com...`;
+						}
+
+						const results = await syncEngine.syncAll(tasksPath);
+						
+						spinner.stop();
+						
+						console.log(chalk.green(`\n📊 Sync completed:`));
+						console.log(chalk.green(`  ✅ Succeeded: ${results.synced}`));
+						console.log(chalk.red(`  ❌ Failed: ${results.errors}`));
+						console.log(chalk.blue(`  📋 Total: ${results.totalItems}`));
+						
+						if (options.force) {
+							console.log(chalk.yellow('\n🔄 Force sync completed - all tasks have been resynced from scratch'));
+						}
+						
+						if (results.errors > 0) {
+							console.log(chalk.red('\n❌ Failed items:'));
+							results.details.filter(d => !d.success).forEach(detail => {
+								console.log(chalk.red(`  - ${detail.type} ${detail.id}: ${detail.title} - ${detail.error}`));
+							});
+							process.exit(1);
+						} else {
+							console.log(chalk.green('\n🎉 All items synced successfully!'));
+						}
+					}
+				} catch (error) {
+					spinner.fail(chalk.red(`Exception during sync: ${error.message}`));
+					console.error(chalk.gray(error.stack));
+					process.exit(1);
+				}
+
+			} catch (error) {
+				console.error(chalk.red(`Error syncing to Monday.com: ${error.message}`));
+				process.exit(1);
+			}
+		});
+
+	// Monday.com Status Command
+	programInstance
+		.command('monday-status')
+		.description('Show Monday.com sync status')
+		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('--verbose', 'Show detailed status information')
+		.action(async (options) => {
+			try {
+				const projectRoot = findProjectRoot();
+				if (!projectRoot) {
+					console.error(chalk.red('Error: Could not find project root directory'));
+					process.exit(1);
+				}
+
+
+
+				// Check if Monday.com integration is configured
+				const config = getMondayIntegrationConfig(projectRoot);
+				if (!config || !config.boardId) {
+					console.error(chalk.red('Error: Monday.com integration not configured.'));
+					console.log(chalk.yellow('Run "task-master config-monday" first to configure the integration.'));
+					process.exit(1);
+				}
+
+				const tasksPath = path.resolve(options.file);
+				if (!fs.existsSync(tasksPath)) {
+					console.error(chalk.red(`Error: Tasks file not found at ${tasksPath}`));
+					process.exit(1);
+				}
+
+				const tasks = readJSON(tasksPath);
+				if (!tasks || !tasks.tasks) {
+					console.error(chalk.red('Error: Invalid tasks file format'));
+					process.exit(1);
+				}
+
+				// Calculate sync statistics
+				const syncedTasks = tasks.tasks.filter(t => t.mondayItemId && t.syncStatus === 'synced');
+				const pendingItems = getTasksNeedingSync(tasksPath);
+				const errorTasks = tasks.tasks.filter(t => t.syncStatus === 'error');
+				
+				// Count subtasks separately
+				let totalSubtasks = 0;
+				let syncedSubtasks = 0;
+				let errorSubtasks = 0;
+				
+				tasks.tasks.forEach(task => {
+					if (task.subtasks) {
+						totalSubtasks += task.subtasks.length;
+						syncedSubtasks += task.subtasks.filter(st => st.mondayItemId && st.syncStatus === 'synced').length;
+						errorSubtasks += task.subtasks.filter(st => st.syncStatus === 'error').length;
+					}
+				});
+
+				// Display status
+				console.log(chalk.blue('\n📋 Monday.com Sync Status'));
+				console.log(chalk.blue('================================\n'));
+				
+				// Configuration info
+				console.log(chalk.green('⚙️  Configuration:'));
+				console.log(`   Board ID: ${chalk.yellow(config.boardId)}`);
+				console.log(`   API Token: ${getMondayApiToken(projectRoot) ? chalk.green('✅ Set') : chalk.red('❌ Not set')}`);
+				
+				// Overall statistics
+				console.log(chalk.green('\n📊 Overall Statistics:'));
+				console.log(`   Total tasks: ${chalk.blue(tasks.tasks.length)}`);
+				console.log(`   Total subtasks: ${chalk.blue(totalSubtasks)}`);
+				console.log(`   Synced tasks: ${chalk.green(syncedTasks.length)}`);
+				console.log(`   Synced subtasks: ${chalk.green(syncedSubtasks)}`);
+				console.log(`   Pending sync: ${chalk.yellow(pendingItems.length)}`);
+				console.log(`   Failed tasks: ${chalk.red(errorTasks.length)}`);
+				console.log(`   Failed subtasks: ${chalk.red(errorSubtasks)}`);
+
+				// Show failed items
+				if (errorTasks.length > 0 || errorSubtasks > 0) {
+					console.log(chalk.red('\n❌ Items with sync errors:'));
+					
+					// Failed tasks
+					errorTasks.forEach(task => {
+						console.log(chalk.red(`   Task ${task.id}: ${task.title}`));
+						if (task.syncError) {
+							console.log(chalk.gray(`     Error: ${task.syncError}`));
+						}
+					});
+					
+					// Failed subtasks
+					tasks.tasks.forEach(task => {
+						if (task.subtasks) {
+							task.subtasks.filter(st => st.syncStatus === 'error').forEach(subtask => {
+								console.log(chalk.red(`   Subtask ${task.id}.${subtask.id}: ${subtask.title}`));
+								if (subtask.syncError) {
+									console.log(chalk.gray(`     Error: ${subtask.syncError}`));
+								}
+							});
+						}
+					});
+				}
+
+				// Show pending items
+				if (pendingItems.length > 0) {
+					console.log(chalk.yellow('\n⏳ Items pending sync:'));
+					pendingItems.forEach(item => {
+						if (item.type === 'task') {
+							console.log(chalk.yellow(`   Task ${item.id}: ${item.task.title}`));
+						} else {
+							console.log(chalk.yellow(`   Subtask ${item.id}: ${item.task.title}`));
+						}
+					});
+				}
+
+				// Verbose mode - show detailed information
+				if (options.verbose) {
+					console.log(chalk.blue('\n🔍 Detailed Information:'));
+					
+					console.log(chalk.green('\n✅ Successfully synced tasks:'));
+					if (syncedTasks.length === 0) {
+						console.log(chalk.gray('   None'));
+					} else {
+						syncedTasks.forEach(task => {
+							console.log(chalk.green(`   Task ${task.id}: ${task.title}`));
+							console.log(chalk.gray(`     Monday Item ID: ${task.mondayItemId}`));
+							if (task.lastSyncedAt) {
+								console.log(chalk.gray(`     Last synced: ${new Date(task.lastSyncedAt).toLocaleString()}`));
+							}
+						});
+					}
+					
+					console.log(chalk.green('\n✅ Successfully synced subtasks:'));
+					const syncedSubtasksList = [];
+					tasks.tasks.forEach(task => {
+						if (task.subtasks) {
+							task.subtasks.filter(st => st.mondayItemId && st.syncStatus === 'synced').forEach(subtask => {
+								syncedSubtasksList.push({ parentId: task.id, subtask });
+							});
+						}
+					});
+					
+					if (syncedSubtasksList.length === 0) {
+						console.log(chalk.gray('   None'));
+					} else {
+						syncedSubtasksList.forEach(({ parentId, subtask }) => {
+							console.log(chalk.green(`   Subtask ${parentId}.${subtask.id}: ${subtask.title}`));
+							console.log(chalk.gray(`     Monday Item ID: ${subtask.mondayItemId}`));
+							if (subtask.lastSyncedAt) {
+								console.log(chalk.gray(`     Last synced: ${new Date(subtask.lastSyncedAt).toLocaleString()}`));
+							}
+						});
+					}
+				}
+
+				// Suggest next steps
+				if (pendingItems.length > 0) {
+					console.log(chalk.blue('\n💡 Next steps:'));
+					console.log(chalk.yellow('   Run "task-master sync-monday" to sync all tasks'));
+				} else if (errorTasks.length === 0 && errorSubtasks === 0) {
+					console.log(chalk.green('\n🎉 All items are in sync!'));
+				}
+
+			} catch (error) {
+				console.error(chalk.red(`Error getting Monday.com status: ${error.message}`));
+				process.exit(1);
+			}
+		});
+
+	// Monday.com Init Sync Command
+	programInstance
+		.command('init-monday-sync')
+		.description('Initialize all local tasks with Monday.com sync fields (sets syncStatus to pending)')
+		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('-y, --yes', 'Skip confirmation prompt')
+		.action(async (options) => {
+			try {
+				const projectRoot = findProjectRoot();
+				if (!projectRoot) {
+					console.error(chalk.red('Error: Could not find project root directory'));
+					process.exit(1);
+				}
+
+
+
+				// Check if Monday.com integration is configured
+				const config = getMondayIntegrationConfig(projectRoot);
+				if (!config || !config.boardId) {
+					console.error(chalk.red('Error: Monday.com integration not configured.'));
+					console.log(chalk.yellow('Run "task-master config-monday" first to configure the integration.'));
+					process.exit(1);
+				}
+
+				const tasksPath = path.resolve(options.file);
+				if (!fs.existsSync(tasksPath)) {
+					console.error(chalk.red(`Error: Tasks file not found at ${tasksPath}`));
+					process.exit(1);
+				}
+
+				const tasks = readJSON(tasksPath);
+				if (!tasks || !tasks.tasks) {
+					console.error(chalk.red('Error: Invalid tasks file format'));
+					process.exit(1);
+				}
+
+				// Show information about what will be done
+				console.log(chalk.blue('📋 Monday.com Sync Initialization\n'));
+				console.log(chalk.white(`This will initialize all tasks in ${tasksPath} with Monday.com sync fields.`));
+				console.log(chalk.white('Tasks without sync fields will be marked as "pending" for sync.\n'));
+				
+				// Count tasks that need initialization
+				let tasksNeedingInit = 0;
+				let subtasksNeedingInit = 0;
+				
+				tasks.tasks.forEach(task => {
+					if (!task.hasOwnProperty('mondayItemId')) {
+						tasksNeedingInit++;
+					}
+					if (task.subtasks) {
+						task.subtasks.forEach(subtask => {
+							if (!subtask.hasOwnProperty('mondayItemId')) {
+								subtasksNeedingInit++;
+							}
+						});
+					}
+				});
+
+				const totalNeedingInit = tasksNeedingInit + subtasksNeedingInit;
+				
+				if (totalNeedingInit === 0) {
+					console.log(chalk.green('✅ All tasks already have Monday.com sync fields initialized!'));
+					return;
+				}
+
+				console.log(chalk.yellow(`Found ${tasksNeedingInit} tasks and ${subtasksNeedingInit} subtasks that need initialization.`));
+				console.log(chalk.yellow(`Total items to initialize: ${totalNeedingInit}\n`));
+
+				// Confirmation prompt (unless --yes flag is used)
+				if (!options.yes) {
+					const { confirmInit } = await inquirer.prompt([
+						{
+							type: 'confirm',
+							name: 'confirmInit',
+							message: 'Do you want to proceed with initializing Monday.com sync fields?',
+							default: true
+						}
+					]);
+
+					if (!confirmInit) {
+						console.log(chalk.yellow('❌ Operation cancelled.'));
+						return;
+					}
+				}
+
+				// Perform the initialization
+				const spinner = ora('Initializing Monday.com sync fields...').start();
+
+				try {
+					const result = await initializeMondayFieldsForAllTasks(tasksPath);
+					
+					if (result.success) {
+						spinner.succeed(chalk.green(`✅ ${result.message}`));
+						console.log(chalk.green(`\n🎉 Initialization completed! You can now run "task-master sync-monday" to sync your tasks.`));
+						
+						if (result.updatedCount > 0) {
+							console.log(chalk.blue(`\n💡 Tip: Use "task-master monday-status" to check sync status before syncing.`));
+						}
+					} else {
+						spinner.fail(chalk.red(`❌ Initialization failed: ${result.error}`));
+						process.exit(1);
+					}
+				} catch (error) {
+					spinner.fail(chalk.red(`❌ Exception during initialization: ${error.message}`));
+					console.error(chalk.gray(error.stack));
+					process.exit(1);
+				}
+
+			} catch (error) {
+				console.error(chalk.red(`Error initializing Monday.com sync: ${error.message}`));
+				process.exit(1);
 			}
 		});
 

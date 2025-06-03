@@ -1,0 +1,74 @@
+# Task ID: 95
+# Title: Extend Task Schema for Monday.com Integration
+# Status: done
+# Dependencies: 93
+# Priority: medium
+# Description: Extend the Task Master task schema to include Monday.com item tracking fields such as mondayItemId, lastSyncedAt, and syncStatus. This task has been completed with comprehensive sync utilities, schema extensions, and automated sync hooks.
+# Details:
+✅ **COMPLETED**: Extended task schema and implemented Monday.com integration foundation
+
+**Implemented Components:**
+
+1. **Monday Sync Utilities** (`scripts/modules/task-manager/monday-sync-utils.js`):
+   - `extendTaskWithMondayFields()` - Adds Monday fields to task objects
+   - `markTaskForSync()` - Marks individual tasks for sync
+   - `updateTaskSyncStatus()` - Updates sync status and metadata
+   - `markSubtaskForSync()` - Marks subtasks for sync
+   - `updateSubtaskSyncStatus()` - Updates subtask sync status
+   - `getTasksNeedingSync()` - Retrieves tasks pending sync
+   - `initializeMondayFieldsForAllTasks()` - Bulk initialization utility
+
+2. **Extended Task Schema Fields**:
+   ```javascript
+   {
+     mondayItemId: null,        // Monday.com item ID (string, nullable)
+     lastSyncedAt: null,        // Last sync timestamp (ISO string, nullable)
+     syncStatus: 'pending',     // Sync status ('synced', 'pending', 'error')
+     syncError: null           // Error message if sync failed (string, nullable)
+   }
+   ```
+
+3. **Modified Core Functions**:
+   - `add-task.js` - Auto-adds Monday sync fields to new tasks
+   - `update-task-by-id.js` - Marks tasks for sync after updates
+   - `set-task-status.js` - Marks tasks for sync after status changes
+   - `add-subtask.js` - Extends subtasks with sync fields and marks parent for sync
+
+4. **Smart Sync Hooks**:
+   - Automatic sync marking when tasks/subtasks are modified
+   - Prevents circular sync marking during sync operations
+   - Parent task sync marking when subtasks are modified
+
+5. **Comprehensive Test Coverage**:
+   - 20 unit tests in `tests/unit/monday-sync-utils.test.js`
+   - Tests cover all utility functions, error cases, and edge cases
+   - Proper ES module mocking implementation
+   - All tests passing with full coverage
+
+# Test Strategy:
+✅ **COMPLETED**: Comprehensive test suite implemented
+
+**Test Coverage Includes:**
+1. **Schema Extension Tests**:
+   - Field validation and default values ✅
+   - Enum validation for syncStatus ✅
+   - Null/undefined handling ✅
+
+2. **Utility Function Tests**:
+   - markTaskForSync success and error cases ✅
+   - updateTaskSyncStatus with various parameters ✅
+   - Subtask sync functions ✅
+   - Bulk operations and filtering ✅
+
+3. **Integration Tests**:
+   - Task creation with sync fields ✅
+   - Automatic sync marking on updates ✅
+   - Sync status updates and metadata ✅
+   - Parent-child sync relationships ✅
+
+**Test File**: `tests/unit/monday-sync-utils.test.js`
+- 20 comprehensive test cases
+- Proper ES module mocking
+- Error handling validation
+- Edge case coverage
+- All tests passing

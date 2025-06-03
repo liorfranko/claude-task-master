@@ -1,0 +1,186 @@
+# Task ID: 114
+# Title: Implement Conflict Resolution System
+# Status: pending
+# Dependencies: 110, 111
+# Priority: medium
+# Description: Create a conflict resolution system that detects and resolves conflicts between local and Monday.com tasks in hybrid mode.
+# Details:
+Enhance the sync engine with a robust conflict resolution system that:  
+1. Detects conflicts using timestamps and content hashes  
+2. Implements different resolution strategies: manual, local-wins, monday-wins  
+3. Provides detailed conflict information  
+4. Supports manual resolution through CLI and MCP  
+
+Implementation:  
+```javascript
+// Enhance monday-sync.js with conflict detection and resolution
+
+class MondaySync {
+  // Existing methods
+  
+  async detectConflicts() {
+    // Get tasks from both sources
+    const localTasks = await this.localProvider.getTasks();
+    const mondayTasks = await this.mondayProvider.getTasks();
+    
+    // Create maps for quick lookup
+    const localTasksMap = {};
+    localTasks.forEach(task => {
+      localTasksMap[task.id] = task;
+    });
+    
+    const mondayTasksMap = {};
+    mondayTasks.forEach(task => {
+      if (task.id) {
+        mondayTasksMap[task.id] = task;
+      }
+    });
+    
+    // Clear previous conflicts
+    this.conflicts = [];
+    
+    // Check for conflicts
+    for (const localTask of localTasks) {
+      if (localTask.mondayItemId && mondayTasksMap[localTask.id]) {
+        const mondayTask = mondayTasksMap[localTask.id];
+        
+        if (this._isConflict(localTask, mondayTask)) {
+          this.conflicts.push({
+            id: this.conflicts.length + 1,
+            taskId: localTask.id,
+            localTask,
+            mondayTask,
+            differences: this._getDifferences(localTask, mondayTask),
+            resolution: null
+          });
+        }
+      }
+    }
+    
+    return this.conflicts;
+  }
+  
+  _getDifferences(localTask, mondayTask) {
+    const differences = {};
+    
+    // Compare fields
+    ['title', 'description', 'status', 'priority'].forEach(field => {
+      if (localTask[field] !== mondayTask[field]) {
+        differences[field] = {
+          local: localTask[field],
+          monday: mondayTask[field]
+        };
+      }
+    });
+    
+    return differences;
+  }
+  
+  async resolveConflict(conflictId, strategy) {
+    const conflict = this.conflicts.find(c => c.id === conflictId);
+    if (!conflict) {
+      throw new Error(`Conflict with ID ${conflictId} not found`);
+    }
+    
+    if (strategy === 'local') {
+      // Local wins: Update Monday with local data
+      await this.mondayProvider.updateTask(conflict.localTask.id, conflict.localTask);
+      
+      // Update local task with sync info
+      const syncedTask = {
+        ...conflict.localTask,
+        lastSyncedAt: new Date().toISOString(),
+        syncStatus: 'synced'
+      };
+      await this.localProvider.updateTask(conflict.localTask.id, syncedTask);
+      
+      conflict.resolution = 'local-wins';
+    } else if (strategy === 'monday') {
+      // Monday wins: Update local with Monday data
+      const syncedTask = {
+        ...conflict.localTask,
+        ...conflict.mondayTask,
+        lastSyncedAt: new Date().toISOString(),
+        syncStatus: 'synced'
+      };
+      await this.localProvider.updateTask(conflict.localTask.id, syncedTask);
+      
+      conflict.resolution = 'monday-wins';
+    } else if (strategy === 'manual') {
+      // Manual merge: Use provided merged data
+      throw new Error('Manual merge not implemented yet');
+    } else {
+      throw new Error(`Invalid resolution strategy: ${strategy}`);
+    }
+    
+    return conflict;
+  }
+  
+  async resolveAllConflicts(strategy) {
+    if (!['local', 'monday'].includes(strategy)) {
+      throw new Error(`Invalid resolution strategy: ${strategy}`);
+    }
+    
+    const results = [];
+    for (const conflict of this.conflicts) {
+      const result = await this.resolveConflict(conflict.id, strategy);
+      results.push(result);
+    }
+    
+    return results;
+  }
+}
+```
+
+Implement CLI command for conflict resolution:  
+```javascript
+async function syncResolve(args) {
+  const config = require('./config').getConfig();
+  const syncEngine = new MondaySync(config);
+  
+  // Detect conflicts first
+  const conflicts = await syncEngine.detectConflicts();
+  
+  if (conflicts.length === 0) {
+    console.log('No conflicts found.');
+    return;
+  }
+  
+  const conflictId = args['conflict-id'] ? parseInt(args['conflict-id']) : null;
+  const strategy = args['strategy'];
+  
+  if (!conflictId) {
+    console.log(`Found ${conflicts.length} conflicts:`);
+    conflicts.forEach(conflict => {
+      console.log(`\nConflict #${conflict.id} for task ${conflict.taskId}: ${conflict.localTask.title}`);
+      console.log('Differences:');
+      Object.entries(conflict.differences).forEach(([field, values]) => {
+        console.log(`- ${field}:\n  Local: ${values.local}\n  Monday: ${values.monday}`);
+      });
+    });
+    console.log('\nUse --conflict-id=X --strategy=local|monday to resolve a specific conflict.');
+    return;
+  }
+  
+  if (!['local', 'monday'].includes(strategy)) {
+    console.error('Invalid strategy. Must be one of: local, monday');
+    return;
+  }
+  
+  try {
+    const result = await syncEngine.resolveConflict(conflictId, strategy);
+    console.log(`Conflict #${conflictId} resolved with strategy: ${strategy}`);
+  } catch (error) {
+    console.error(`Error resolving conflict:`, error.message);
+  }
+}
+```
+
+# Test Strategy:
+1. Test conflict detection with various scenarios  
+2. Test different resolution strategies  
+3. Test with real Monday.com API using test board 9275265350  
+4. Test CLI commands for conflict resolution  
+5. Test MCP tools for conflict resolution  
+6. Test edge cases like deleted tasks in one system  
+7. Test performance with many conflicts

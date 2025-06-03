@@ -1,0 +1,231 @@
+# Task ID: 101
+# Title: Implement Error Handling and Logging
+# Status: pending
+# Dependencies: 96, 97, 98
+# Priority: medium
+# Description: Enhance error handling and add logging throughout the Monday.com integration to improve debugging and user feedback.
+# Details:
+1. Implement comprehensive error handling
+2. Add detailed logging
+3. Improve user feedback for common errors
+
+Implementation:
+```javascript
+// Add to scripts/modules/monday-logger.js
+const fs = require('fs');
+const path = require('path');
+
+class MondayLogger {
+  constructor(options = {}) {
+    this.logToConsole = options.console !== false;
+    this.logToFile = options.file !== false;
+    this.logLevel = options.level || 'info'; // debug, info, warn, error
+    this.logFile = options.logFile || path.join(process.cwd(), 'monday-sync.log');
+    
+    this.levels = {
+      debug: 0,
+      info: 1,
+      warn: 2,
+      error: 3
+    };
+  }
+  
+  _shouldLog(level) {
+    return this.levels[level] >= this.levels[this.logLevel];
+  }
+  
+  _formatMessage(level, message, data) {
+    const timestamp = new Date().toISOString();
+    let logMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+    
+    if (data) {
+      if (typeof data === 'object') {
+        logMessage += '\n' + JSON.stringify(data, null, 2);
+      } else {
+        logMessage += ' ' + data;
+      }
+    }
+    
+    return logMessage;
+  }
+  
+  _writeToFile(message) {
+    if (!this.logToFile) return;
+    
+    try {
+      fs.appendFileSync(this.logFile, message + '\n');
+    } catch (error) {
+      console.error(`Error writing to log file: ${error.message}`);
+    }
+  }
+  
+  debug(message, data) {
+    if (!this._shouldLog('debug')) return;
+    
+    const formattedMessage = this._formatMessage('debug', message, data);
+    
+    if (this.logToConsole) {
+      console.debug(formattedMessage);
+    }
+    
+    this._writeToFile(formattedMessage);
+  }
+  
+  info(message, data) {
+    if (!this._shouldLog('info')) return;
+    
+    const formattedMessage = this._formatMessage('info', message, data);
+    
+    if (this.logToConsole) {
+      console.info(formattedMessage);
+    }
+    
+    this._writeToFile(formattedMessage);
+  }
+  
+  warn(message, data) {
+    if (!this._shouldLog('warn')) return;
+    
+    const formattedMessage = this._formatMessage('warn', message, data);
+    
+    if (this.logToConsole) {
+      console.warn(formattedMessage);
+    }
+    
+    this._writeToFile(formattedMessage);
+  }
+  
+  error(message, data) {
+    if (!this._shouldLog('error')) return;
+    
+    const formattedMessage = this._formatMessage('error', message, data);
+    
+    if (this.logToConsole) {
+      console.error(formattedMessage);
+    }
+    
+    this._writeToFile(formattedMessage);
+  }
+}
+
+// Create a singleton instance
+const logger = new MondayLogger();
+
+module.exports = { MondayLogger, logger };
+
+// Enhance error handling in monday-client.js
+const { logger } = require('./monday-logger');
+
+// Add to MondayClient class
+async _executeWithRateLimit(operation, variables) {
+  // Existing rate limiting logic...
+  
+  try {
+    this.lastRequestTime = Date.now();
+    logger.debug('Executing GraphQL operation', { operation, variables });
+    return await this.client.request(operation, variables);
+  } catch (error) {
+    if (error.response?.status === 429) {
+      logger.warn('Rate limit exceeded, backing off', { delay: this.rateLimitDelay });
+      // Rate limited, increase backoff and retry
+      this.rateLimitDelay = Math.min(this.rateLimitDelay * 2, 5000);
+      await setTimeout(1000);
+      return this._executeWithRateLimit(operation, variables);
+    }
+    
+    // Enhanced error handling
+    if (error.response?.errors) {
+      const mondayErrors = error.response.errors;
+      logger.error('Monday API returned errors', { errors: mondayErrors });
+      
+      // Check for common errors and provide better messages
+      const authError = mondayErrors.find(e => e.message.includes('Authentication'));
+      if (authError) {
+        throw new Error('Authentication failed. Please check your Monday.com API token.');
+      }
+      
+      const permissionError = mondayErrors.find(e => e.message.includes('Permission'));
+      if (permissionError) {
+        throw new Error('Permission denied. Your API token may not have sufficient permissions.');
+      }
+      
+      const boardError = mondayErrors.find(e => e.message.includes('board'));
+      if (boardError) {
+        throw new Error(`Board error: ${boardError.message}. Please check your board ID.`);
+      }
+    }
+    
+    logger.error('GraphQL operation failed', { error: error.message, stack: error.stack });
+    throw error;
+  }
+}
+
+// Enhance sync engine error handling
+async syncTask(task) {
+  logger.info(`Syncing task ${task.id} to Monday.com`, { taskTitle: task.title });
+  
+  try {
+    let result;
+    
+    if (task.mondayItemId) {
+      logger.debug(`Updating existing Monday item ${task.mondayItemId}`);
+      result = await this.updateItem(task.mondayItemId, task);
+    } else {
+      logger.debug('Creating new Monday item');
+      result = await this.createItem(task);
+    }
+    
+    logger.info(`Task ${task.id} synced successfully`, { mondayItemId: result.mondayItemId });
+    return result;
+  } catch (error) {
+    logger.error(`Failed to sync task ${task.id}`, { error: error.message, stack: error.stack });
+    
+    // Categorize errors for better user feedback
+    if (error.message.includes('Authentication')) {
+      return {
+        success: false,
+        error: 'Authentication failed. Please check your Monday.com API token.',
+        category: 'auth'
+      };
+    } else if (error.message.includes('Permission')) {
+      return {
+        success: false,
+        error: 'Permission denied. Your API token may not have sufficient permissions.',
+        category: 'permission'
+      };
+    } else if (error.message.includes('board')) {
+      return {
+        success: false,
+        error: `Board error: ${error.message}. Please check your board ID.`,
+        category: 'board'
+      };
+    } else if (error.message.includes('network') || error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+      return {
+        success: false,
+        error: 'Network error. Please check your internet connection.',
+        category: 'network'
+      };
+    }
+    
+    return {
+      success: false,
+      error: error.message,
+      category: 'unknown'
+    };
+  }
+}
+```
+
+# Test Strategy:
+1. Create unit tests for the logger:
+   - Test log level filtering
+   - Test console output
+   - Test file output
+2. Create unit tests for error handling:
+   - Test API error categorization
+   - Test network error handling
+   - Test rate limit handling
+3. Create integration tests:
+   - Test logging during sync operations
+   - Test error handling with simulated API errors
+   - Test user feedback for common error scenarios

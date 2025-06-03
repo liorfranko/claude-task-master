@@ -1,0 +1,140 @@
+# Task ID: 107
+# Title: Extend Configuration System for Persistence Modes
+# Status: done
+# Dependencies: 104
+# Priority: high
+# Description: The configuration system has been successfully extended and consolidated to support persistence mode settings, Monday.com board configuration, and environment variable integration. The mondayIntegration section is now the single source of truth for all Monday.com-related settings, and the persistence section contains only the mode field. All CLI commands, validation, migration logic, and tests have been updated to reflect this unified structure. Backward compatibility is maintained through a migration helper. The system now supports robust validation, CLI management, and secure environment variable resolution for API tokens.
+# Details:
+The configuration system is now consolidated and streamlined:
+
+- **Config Manager (`config-manager.js`)**:
+  - Removed duplicate `mondayConfig` from the `persistence` section.
+  - Enhanced `mondayIntegration` with the `apiToken` field and all necessary board and sync settings.
+  - Simplified `persistence` section to only contain the `mode` field (`local`, `monday`, or `hybrid`).
+  - Removed deprecated fields (`syncInterval`, `syncSubtasks`).
+  - Updated all persistence-related functions to reference the consolidated `mondayIntegration`.
+  - Improved deep merge logic and validation functions for the new structure.
+
+- **CLI Commands (`commands.js`)**:
+  - Updated `config-persistence` and related commands to work with the new structure.
+  - Removed `--sync-interval` and `--sync-subtasks` options.
+  - Updated display and update logic to use `mondayIntegration`.
+  - Improved validation result handling and error messaging.
+
+- **Tests (`config-manager.test.js`)**:
+  - Updated all test expectations to match the new, simplified structure.
+  - Removed references to deprecated fields and duplicate configs.
+
+- **Migration and Validation**:
+  - Migration helper ensures backward compatibility with legacy configuration formats.
+  - Validation logic checks for required fields and valid values in the new structure.
+
+- **Environment Variable Support**:
+  - API tokens can be specified as direct values or as `env:MONDAY_API_TOKEN` references, resolved securely at runtime.
+
+**Final Consolidated Configuration Structure:**
+```javascript
+{
+  persistence: {
+    mode: 'local' // 'local', 'monday', or 'hybrid'
+  },
+  mondayIntegration: {
+    boardId: null,
+    apiToken: null, // Can be direct token or env:MONDAY_API_TOKEN
+    columnMapping: {
+      status: 'status',
+      title: 'name',
+      description: 'description',
+      details: 'task_details',
+      taskId: 'task_id_field',
+      priority: 'task_priority',
+      testStrategy: 'test_strategy',
+      dependencies: 'task_dependencies'
+    },
+    syncSettings: {
+      conflictResolution: 'manual', // 'manual', 'local-wins', or 'monday-wins'
+      autoSync: false
+    }
+  }
+}
+```
+
+**Verification:**
+- All tests pass
+- CLI commands and config management work as expected
+- Backward compatibility maintained
+- Configuration is now clean, non-duplicative, and maintainable
+
+# Test Strategy:
+1. Unit tests for configuration schema validation, including the new persistence section and enhanced mondayIntegration section
+2. Test setting and retrieving different persistence modes via CLI and programmatically
+3. Test environment variable resolution for API tokens, ensuring secure handling
+4. Test CLI commands for configuration management, including error handling for invalid input
+5. Test configuration migration for backward compatibility
+6. Test validation of Monday.com board settings and required fields
+7. Test error handling for invalid configurations and missing environment variables
+8. Test that all persistence-related functions correctly reference the mondayIntegration configuration
+9. Test the deep merge logic in _loadAndValidateConfig to ensure proper configuration inheritance
+10. Confirm that deprecated fields and duplicate configs are no longer present in the configuration or codebase
+
+# Subtasks:
+## 107-1. Consolidate Monday.com Configuration [done]
+### Dependencies: None
+### Description: Eliminate duplication by removing mondayConfig from persistence section and enhancing the existing mondayIntegration section with all necessary fields.
+### Details:
+
+
+## 107-2. Update Persistence Section Structure [done]
+### Dependencies: None
+### Description: Simplify the persistence section to only contain the mode field (local, monday, or hybrid).
+### Details:
+
+
+## 107-3. Update Monday.com Integration Fields [done]
+### Dependencies: None
+### Description: Add apiToken field to mondayIntegration section and clean up syncSettings by removing syncInterval and syncSubtasks fields, keeping only conflictResolution and autoSync.
+### Details:
+
+
+## 107-4. Update Persistence-Related Functions [done]
+### Dependencies: None
+### Description: Modify all getPersistence* functions to reference the consolidated mondayIntegration configuration instead of a nested mondayConfig.
+### Details:
+
+
+## 107-5. Update Configuration Validation [done]
+### Dependencies: None
+### Description: Modify updatePersistenceConfig and validatePersistenceConfig functions to work with the new structure.
+### Details:
+
+
+## 107-6. Implement Migration Helper [done]
+### Dependencies: None
+### Description: Simplify migrateMondayIntegrationToPersistence function to ensure backward compatibility with older configuration formats.
+### Details:
+
+
+## 107-7. Update Tests [done]
+### Dependencies: None
+### Description: Update test files to reflect the new configuration structure and ensure all tests pass with the consolidated approach.
+### Details:
+
+
+## 107-8. Implement Monday.com API Integration [done]
+### Dependencies: None
+### Description: Implement the necessary API calls to interact with Monday.com boards using the GraphQL API. Include functionality to create and update items on the board.
+### Details:
+
+
+## 107-9. Add Owner and Replied Status Support [done]
+### Dependencies: None
+### Description: Extend the Monday.com integration to support setting up Owner and Replied status columns on a board via the API, as these are common requirements for task tracking.
+### Details:
+
+
+## 107-10. Document API Integration [done]
+### Dependencies: None
+### Description: Create comprehensive documentation for the Monday.com API integration, including examples of how to set up and use the different persistence modes.
+### Details:
+
+

@@ -1,0 +1,142 @@
+# Task ID: 111
+# Title: Implement Hybrid Storage Provider
+# Status: pending
+# Dependencies: 108, 110
+# Priority: medium
+# Description: Create a hybrid storage provider that implements the persistence manager interface for hybrid mode, writing to both local storage and Monday.com.
+# Details:
+Create `scripts/modules/hybrid-storage.js` that:  
+1. Implements the persistence manager interface  
+2. Writes to both local storage and Monday.com  
+3. Uses the sync engine for conflict resolution  
+4. Handles partial failures gracefully  
+5. Maintains sync state and timestamps  
+
+Code structure:  
+```javascript
+const localProvider = require('./local-storage');
+const mondayProvider = require('./monday-storage');
+const MondaySync = require('./monday-sync');
+
+class HybridStorageProvider {
+  constructor(config) {
+    this.config = config;
+    this.localProvider = new localProvider(config);
+    this.mondayProvider = new mondayProvider(config);
+    this.syncEngine = new MondaySync(config);
+  }
+
+  async getTasks() {
+    // Prefer local tasks but sync first if connected
+    try {
+      // Try to sync if we're online
+      await this.syncEngine.syncAll();
+    } catch (error) {
+      console.warn('Could not sync with Monday.com:', error.message);
+      // Continue with local tasks only
+    }
+    
+    return this.localProvider.getTasks();
+  }
+
+  async getTask(id) {
+    // Get from local first
+    const localTask = await this.localProvider.getTask(id);
+    
+    // Try to sync this specific task if it exists
+    if (localTask && localTask.mondayItemId) {
+      try {
+        const mondayTask = await this.mondayProvider.getTask(id);
+        
+        // Check for conflicts
+        if (this.syncEngine._isConflict(localTask, mondayTask)) {
+          // Handle according to conflict resolution strategy
+          const strategy = this.config.persistence?.mondayConfig?.syncSettings?.conflictResolution || 'manual';
+          
+          if (strategy === 'local-wins') {
+            await this.mondayProvider.updateTask(id, localTask);
+            return localTask;
+          } else if (strategy === 'monday-wins') {
+            const mergedTask = {
+              ...localTask,
+              ...mondayTask,
+              lastSyncedAt: new Date().toISOString(),
+              syncStatus: 'synced'
+            };
+            await this.localProvider.updateTask(id, mergedTask);
+            return mergedTask;
+          } else {
+            // Manual resolution - mark as conflict
+            const conflictTask = {
+              ...localTask,
+              syncStatus: 'conflict'
+            };
+            await this.localProvider.updateTask(id, conflictTask);
+            return conflictTask;
+          }
+        }
+      } catch (error) {
+        console.warn(`Could not sync task ${id} with Monday.com:`, error.message);
+        // Continue with local task
+      }
+    }
+    
+    return localTask;
+  }
+
+  async createTask(taskData) {
+    // Create in local first
+    const localTask = await this.localProvider.createTask(taskData);
+    
+    try {
+      // Create in Monday
+      const mondayTask = await this.mondayProvider.createTask(taskData);
+      
+      // Update local with Monday ID
+      const syncedTask = {
+        ...localTask,
+        mondayItemId: mondayTask.mondayItemId,
+        lastSyncedAt: new Date().toISOString(),
+        syncStatus: 'synced',
+        lastModifiedLocal: new Date().toISOString()
+      };
+      
+      await this.localProvider.updateTask(localTask.id, syncedTask);
+      return syncedTask;
+    } catch (error) {
+      console.error('Could not create task in Monday.com:', error.message);
+      
+      // Mark as pending sync
+      const pendingTask = {
+        ...localTask,
+        syncStatus: 'pending',
+        lastModifiedLocal: new Date().toISOString()
+      };
+      
+      await this.localProvider.updateTask(localTask.id, pendingTask);
+      return pendingTask;
+    }
+  }
+
+  // Implement other CRUD methods with similar pattern
+}
+
+module.exports = HybridStorageProvider;
+```
+
+Register with persistence manager:  
+```javascript
+const persistenceManager = require('./persistence-manager');
+const HybridStorageProvider = require('./hybrid-storage');
+
+persistenceManager.registerProvider('hybrid', new HybridStorageProvider(require('../config').getConfig()));
+```
+
+# Test Strategy:
+1. Unit tests with mock providers  
+2. Test all CRUD operations in hybrid mode  
+3. Test offline behavior when Monday.com is unavailable  
+4. Test conflict detection and resolution  
+5. Test with real Monday.com API using test board 9275265350  
+6. Test performance with large task sets  
+7. Test recovery from partial failures

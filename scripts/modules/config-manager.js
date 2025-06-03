@@ -62,6 +62,29 @@ const DEFAULTS = {
 		defaultPriority: 'medium',
 		projectName: 'Task Master',
 		ollamaBaseUrl: 'http://localhost:11434/api'
+	},
+	persistence: {
+		mode: 'local', // 'local', 'monday', or 'hybrid'
+		hybridConfig: {
+			primaryProvider: 'local',        // Which provider to use as primary for reads ('local' or 'monday')
+			conflictResolution: 'manual',    // 'manual', 'local-wins', 'monday-wins', 'newest-wins'
+			autoSync: false,                 // Whether to auto-sync in background
+			syncOnWrite: true                // Whether to sync after write operations
+		}
+	},
+	mondayIntegration: {
+		boardId: null, // Required for Monday.com functionality
+		apiToken: null, // Can be direct token or env:MONDAY_API_TOKEN
+		columnMapping: {
+			status: 'status',
+			title: 'name',
+			description: 'description',
+			details: 'task_details',
+			taskId: 'task_id_field',
+			priority: 'task_priority',
+			testStrategy: 'test_strategy',
+			dependencies: 'task_dependencies'
+		}
 	}
 };
 
@@ -121,7 +144,22 @@ function _loadAndValidateConfig(explicitRoot = null) {
 							? { ...defaults.models.fallback, ...parsedConfig.models.fallback }
 							: { ...defaults.models.fallback }
 				},
-				global: { ...defaults.global, ...parsedConfig?.global }
+				global: { ...defaults.global, ...parsedConfig?.global },
+				persistence: {
+					mode: parsedConfig?.persistence?.mode || defaults.persistence.mode,
+					hybridConfig: {
+						...defaults.persistence.hybridConfig,
+						...parsedConfig?.persistence?.hybridConfig
+					}
+				},
+				mondayIntegration: {
+					boardId: parsedConfig?.mondayIntegration?.boardId || defaults.mondayIntegration.boardId,
+					apiToken: parsedConfig?.mondayIntegration?.apiToken || defaults.mondayIntegration.apiToken,
+					columnMapping: {
+						...defaults.mondayIntegration.columnMapping,
+						...parsedConfig?.mondayIntegration?.columnMapping
+					}
+				}
 			};
 			configSource = `file (${configPath})`; // Update source info
 
@@ -712,6 +750,486 @@ function getBaseUrlForRole(role, explicitRoot = null) {
 		: undefined;
 }
 
+// --- Monday.com Integration Configuration Functions ---
+
+/**
+ * Gets the Monday.com integration configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Monday.com integration configuration
+ */
+function getMondayIntegrationConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration || DEFAULTS.mondayIntegration;
+}
+
+/**
+ * Gets the Monday.com board ID from configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {string|null} Monday.com board ID or null if not set
+ */
+function getMondayBoardId(explicitRoot = null) {
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	return mondayConfig.boardId;
+}
+
+/**
+ * Gets the Monday.com API token from config or environment variable
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object} session - Session object for MCP context (contains env variables)
+ * @returns {string|null} Monday.com API token or null if not found
+ */
+function getMondayApiToken(explicitRoot = null, session = null) {
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	
+	// Try config first, then environment variable
+	if (mondayConfig.apiToken) {
+		return mondayConfig.apiToken;
+	}
+	
+	// Use session.env for MCP context, otherwise process.env
+	const envVars = session?.env || process.env;
+	return envVars.MONDAY_API_TOKEN || null;
+}
+
+/**
+ * Gets the Monday.com column mapping configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Column mapping configuration
+ */
+function getMondayColumnMapping(explicitRoot = null) {
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	return mondayConfig.columnMapping || DEFAULTS.mondayIntegration.columnMapping;
+}
+
+/**
+ * Validates the Monday.com configuration with optional board information fetching
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object} session - Session object for MCP context
+ * @param {boolean} fetchBoardInfo - Whether to fetch actual board information from Monday.com
+ * @returns {Promise<object>} Validation result with { valid: boolean, errors: string[], boardId?: string, boardName?: string, boardInfo?: object }
+ */
+async function validateMondayConfigWithBoardInfo(explicitRoot = null, session = null, fetchBoardInfo = false) {
+	const errors = [];
+	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
+	
+	// Validate board ID
+	if (!mondayConfig.boardId) {
+		errors.push('Monday.com board ID is required. Set it using task-master config monday --board-id=<id>');
+	} else if (typeof mondayConfig.boardId !== 'string') {
+		errors.push('Monday.com board ID must be a string');
+	}
+	
+	// Validate API token availability
+	const apiToken = getMondayApiToken(explicitRoot, session);
+	if (!apiToken) {
+		errors.push('Monday.com API token is required. Set MONDAY_API_TOKEN environment variable or use task-master config monday --token=<token>');
+	}
+	
+	// Validate column mapping
+	const columnMapping = getMondayColumnMapping(explicitRoot);
+	
+	// Title is required since it's used for the Monday item name
+	if (!columnMapping.title || typeof columnMapping.title !== 'string') {
+		errors.push(`Monday.com column mapping for 'title' must be a string`);
+	}
+	
+	const result = {
+		valid: errors.length === 0,
+		errors
+	};
+	
+	// If basic validation passes and we should fetch board info, do the API call
+	if (result.valid && fetchBoardInfo && apiToken && mondayConfig.boardId) {
+		try {
+			const { MondayClient } = await import('./monday-client.js');
+			const client = new MondayClient(apiToken);
+			const boardResult = await client.testBoardAccess(mondayConfig.boardId);
+			
+			if (boardResult.success) {
+				result.boardInfo = boardResult.data;
+				result.boardName = boardResult.data.name;
+				result.boardId = mondayConfig.boardId;
+				
+				// Check if configured column IDs actually exist on the board
+				const availableColumnIds = boardResult.data.columns.map(col => col.id);
+				const configuredColumns = getMondayColumnMapping(explicitRoot);
+				
+				for (const [mappingKey, columnId] of Object.entries(configuredColumns)) {
+					if (!availableColumnIds.includes(columnId)) {
+						errors.push(`Column ID "${columnId}" (mapped to ${mappingKey}) does not exist on board. Available columns: ${availableColumnIds.join(', ')}`);
+					}
+				}
+				
+				// Update validity based on column validation
+				result.valid = errors.length === 0;
+				result.errors = errors;
+			} else {
+				errors.push(`Failed to access Monday.com board: ${boardResult.error}`);
+				result.valid = false;
+				result.errors = errors;
+			}
+		} catch (error) {
+			errors.push(`Error connecting to Monday.com: ${error.message}`);
+			result.valid = false;
+			result.errors = errors;
+		}
+	} else if (result.valid) {
+		result.boardId = mondayConfig.boardId;
+	}
+	
+	return result;
+}
+
+/**
+ * Updates Monday.com configuration in the config file
+ * @param {object} updates - Object containing configuration updates
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if configuration was updated successfully
+ */
+function updateMondayConfig(updates, explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Ensure mondayIntegration section exists
+	if (!config.mondayIntegration) {
+		config.mondayIntegration = { ...DEFAULTS.mondayIntegration };
+	}
+	
+	// Apply updates with deep merge for nested objects
+	if (updates.boardId !== undefined) {
+		config.mondayIntegration.boardId = updates.boardId;
+	}
+	
+	if (updates.apiToken !== undefined) {
+		config.mondayIntegration.apiToken = updates.apiToken;
+	}
+	
+	if (updates.columnMapping) {
+		config.mondayIntegration.columnMapping = {
+			...config.mondayIntegration.columnMapping,
+			...updates.columnMapping
+		};
+	}
+	
+	return writeConfig(config, explicitRoot);
+}
+
+/**
+ * Gets the persistence configuration from the config file
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Persistence configuration object
+ */
+function getPersistenceConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.persistence || DEFAULTS.persistence;
+}
+
+/**
+ * Gets the current persistence mode from configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {string} Current persistence mode ('local', 'monday', or 'hybrid')
+ */
+function getPersistenceMode(explicitRoot = null) {
+	const persistenceConfig = getPersistenceConfig(explicitRoot);
+	return persistenceConfig.mode || DEFAULTS.persistence.mode;
+}
+
+/**
+ * Get persistence Monday.com configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Monday.com configuration for persistence
+ */
+function getPersistenceMondayConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration || {};
+}
+
+/**
+ * Get persistence Monday.com API token
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object|null} session - Optional session object (for MCP context)
+ * @returns {string|null} Monday.com API token
+ */
+function getPersistenceMondayApiToken(explicitRoot = null, session = null) {
+	const config = getConfig(explicitRoot);
+	const token = config.mondayIntegration?.apiToken;
+	
+	if (!token) {
+		return null;
+	}
+	
+	// Handle environment variable references
+	if (typeof token === 'string' && token.startsWith('env:')) {
+		const envVarName = token.substring(4); // Remove 'env:' prefix
+		return resolveEnvVariable(envVarName, session);
+	}
+	
+	return token;
+}
+
+/**
+ * Get persistence Monday.com board ID
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {string|null} Monday.com board ID
+ */
+function getPersistenceMondayBoardId(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration?.boardId || null;
+}
+
+/**
+ * Get persistence Monday.com column mapping
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {object} Monday.com column mapping
+ */
+function getPersistenceMondayColumnMapping(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config.mondayIntegration?.columnMapping || {};
+}
+
+/**
+ * Sets the persistence mode in the configuration
+ * @param {string} mode - The persistence mode to set ('local', 'monday', or 'hybrid')
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if configuration was updated successfully
+ */
+function setPersistenceMode(mode, explicitRoot = null) {
+	const validModes = ['local', 'monday', 'hybrid'];
+	if (!validModes.includes(mode)) {
+		throw new ConfigurationError(`Invalid persistence mode: ${mode}. Must be one of: ${validModes.join(', ')}`);
+	}
+
+	const config = getConfig(explicitRoot);
+	
+	// Ensure persistence section exists
+	if (!config.persistence) {
+		config.persistence = { ...DEFAULTS.persistence };
+	}
+	
+	config.persistence.mode = mode;
+	return writeConfig(config, explicitRoot);
+}
+
+/**
+ * Updates persistence configuration in the config file
+ * @param {object} updates - Object containing configuration updates
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if configuration was updated successfully
+ */
+function updatePersistenceConfig(updates, explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Ensure persistence section exists
+	if (!config.persistence) {
+		config.persistence = { ...DEFAULTS.persistence };
+	}
+	
+	// Ensure mondayIntegration section exists
+	if (!config.mondayIntegration) {
+		config.mondayIntegration = { ...DEFAULTS.mondayIntegration };
+	}
+	
+	// Apply updates with deep merge for nested objects
+	if (updates.mode !== undefined) {
+		config.persistence.mode = updates.mode;
+	}
+	
+	// Handle Monday.com configuration updates
+	if (updates.mondayConfig || updates.boardId !== undefined || updates.apiToken !== undefined || 
+	    updates.columnMapping) {
+		
+		if (updates.boardId !== undefined) {
+			config.mondayIntegration.boardId = updates.boardId;
+		}
+		
+		if (updates.apiToken !== undefined) {
+			config.mondayIntegration.apiToken = updates.apiToken;
+		}
+		
+		if (updates.columnMapping) {
+			config.mondayIntegration.columnMapping = {
+				...config.mondayIntegration.columnMapping,
+				...updates.columnMapping
+			};
+		}
+		
+		// Handle legacy mondayConfig updates
+		if (updates.mondayConfig) {
+			if (updates.mondayConfig.boardId !== undefined) {
+				config.mondayIntegration.boardId = updates.mondayConfig.boardId;
+			}
+			if (updates.mondayConfig.apiToken !== undefined) {
+				config.mondayIntegration.apiToken = updates.mondayConfig.apiToken;
+			}
+			if (updates.mondayConfig.columnMapping) {
+				config.mondayIntegration.columnMapping = {
+					...config.mondayIntegration.columnMapping,
+					...updates.mondayConfig.columnMapping
+				};
+			}
+		}
+	}
+	
+	// Write the updated configuration
+	return writeConfig(config, explicitRoot);
+}
+
+/**
+ * Validates persistence configuration
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @param {object|null} session - Optional session object (for MCP context)
+ * @returns {Promise<object>} Validation result with isValid boolean and issues array
+ */
+async function validatePersistenceConfig(explicitRoot = null, session = null) {
+	const result = {
+		isValid: true,
+		issues: []
+	};
+	
+	const config = getConfig(explicitRoot);
+	const mode = config.persistence?.mode;
+	
+	// Validate persistence mode
+	const validModes = ['local', 'monday', 'hybrid'];
+	if (!mode || !validModes.includes(mode)) {
+		result.isValid = false;
+		result.issues.push(`Invalid persistence mode: ${mode}. Must be one of: ${validModes.join(', ')}`);
+		return result;
+	}
+	
+	// For monday or hybrid mode, validate Monday.com configuration
+	if (mode === 'monday' || mode === 'hybrid') {
+		const mondayConfig = config.mondayIntegration;
+		
+		if (!mondayConfig) {
+			result.isValid = false;
+			result.issues.push('Monday.com integration configuration is missing');
+			return result;
+		}
+		
+		// Check for required board ID
+		if (!mondayConfig.boardId) {
+			result.isValid = false;
+			result.issues.push('Monday.com board ID is required for persistence mode');
+		}
+		
+		// Check for API token (either direct or environment variable)
+		const apiToken = getPersistenceMondayApiToken(explicitRoot, session);
+		if (!apiToken) {
+			result.isValid = false;
+			result.issues.push('Monday.com API token is required but not found (check configuration and environment variables)');
+		}
+		
+		// Validate column mapping
+		if (!mondayConfig.columnMapping || Object.keys(mondayConfig.columnMapping).length === 0) {
+			result.isValid = false;
+			result.issues.push('Monday.com column mapping is required but missing');
+		}
+	}
+	
+	return result;
+}
+
+/**
+ * Migrates legacy Monday.com integration configuration to persistence configuration
+ * This function ensures backward compatibility for existing configurations
+ * @param {string|null} explicitRoot - Optional explicit path to the project root
+ * @returns {boolean} True if migration was performed, false if no migration needed
+ */
+function migrateMondayIntegrationToPersistence(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Check if persistence section exists and has proper structure
+	if (!config.persistence) {
+		config.persistence = { mode: 'local' };
+		return writeConfig(config, explicitRoot);
+	}
+	
+	// Check if mondayIntegration section exists and is properly structured
+	if (!config.mondayIntegration) {
+		config.mondayIntegration = { ...DEFAULTS.mondayIntegration };
+		return writeConfig(config, explicitRoot);
+	}
+	
+	// No migration needed if both sections exist with proper structure
+	return false;
+}
+
+/**
+ * Get hybrid configuration for persistence
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {Object} Hybrid configuration object
+ */
+function getHybridConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config?.persistence?.hybridConfig || DEFAULTS.persistence.hybridConfig;
+}
+
+/**
+ * Get hybrid primary provider setting
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {string} Primary provider ('local' or 'monday')
+ */
+function getHybridPrimaryProvider(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.primaryProvider || DEFAULTS.persistence.hybridConfig.primaryProvider;
+}
+
+/**
+ * Get hybrid conflict resolution strategy
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {string} Conflict resolution strategy
+ */
+function getHybridConflictResolution(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.conflictResolution || DEFAULTS.persistence.hybridConfig.conflictResolution;
+}
+
+/**
+ * Get hybrid auto-sync setting
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {boolean} Whether auto-sync is enabled
+ */
+function getHybridAutoSync(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.autoSync !== undefined ? hybridConfig.autoSync : DEFAULTS.persistence.hybridConfig.autoSync;
+}
+
+/**
+ * Get hybrid sync-on-write setting
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {boolean} Whether to sync after write operations
+ */
+function getHybridSyncOnWrite(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.syncOnWrite !== undefined ? hybridConfig.syncOnWrite : DEFAULTS.persistence.hybridConfig.syncOnWrite;
+}
+
+/**
+ * Update hybrid configuration settings
+ * @param {Object} updates - Object containing updates to apply
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ */
+function updateHybridConfig(updates, explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Ensure persistence.hybridConfig exists
+	if (!config.persistence) {
+		config.persistence = { ...DEFAULTS.persistence };
+	}
+	if (!config.persistence.hybridConfig) {
+		config.persistence.hybridConfig = { ...DEFAULTS.persistence.hybridConfig };
+	}
+	
+	// Apply updates
+	config.persistence.hybridConfig = {
+		...config.persistence.hybridConfig,
+		...updates
+	};
+	
+	// Write updated config
+	writeConfig(config, explicitRoot);
+}
+
 export {
 	// Core config access
 	getConfig,
@@ -756,5 +1274,33 @@ export {
 	getMcpApiKeyStatus,
 
 	// ADD: Function to get all provider names
-	getAllProviders
+	getAllProviders,
+
+	// Monday.com integration functions
+	getMondayIntegrationConfig,
+	getMondayBoardId,
+	getMondayApiToken,
+	getMondayColumnMapping,
+	validateMondayConfigWithBoardInfo,
+	updateMondayConfig,
+
+	// Persistence functions
+	getPersistenceConfig,
+	getPersistenceMode,
+	getPersistenceMondayConfig,
+	getPersistenceMondayApiToken,
+	getPersistenceMondayBoardId,
+	getPersistenceMondayColumnMapping,
+	setPersistenceMode,
+	updatePersistenceConfig,
+	validatePersistenceConfig,
+	migrateMondayIntegrationToPersistence,
+
+	// Hybrid configuration functions
+	getHybridConfig,
+	getHybridPrimaryProvider,
+	getHybridConflictResolution,
+	getHybridAutoSync,
+	getHybridSyncOnWrite,
+	updateHybridConfig
 };

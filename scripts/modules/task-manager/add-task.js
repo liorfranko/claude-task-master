@@ -16,6 +16,7 @@ import { readJSON, writeJSON, log as consoleLog, truncate } from '../utils.js';
 import { generateObjectService } from '../ai-services-unified.js';
 import { getDefaultPriority } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
+import { extendTaskWithMondayFields } from './monday-sync-utils.js';
 
 // Define Zod schema for the expected AI output object
 const AiTaskDataSchema = z.object({
@@ -1003,6 +1004,9 @@ async function addTask(
 			priority: effectivePriority,
 			subtasks: [] // Initialize with empty subtasks array
 		};
+
+		// Extend the task with Monday.com sync fields
+		Object.assign(newTask, extendTaskWithMondayFields(newTask));
 
 		// Additional check: validate all dependencies in the AI response
 		if (taskData.dependencies?.length) {

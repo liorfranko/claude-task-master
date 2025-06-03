@@ -26,6 +26,7 @@ import {
 	isApiKeySet // Keep this check
 } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
+import { markTaskForSync } from './monday-sync-utils.js';
 
 // Zod schema for post-parsing validation of the updated task object
 const updatedTaskSchema = z
@@ -478,6 +479,14 @@ The changes described in the prompt should be thoughtfully applied to make the t
 
 			// --- Write File and Generate (Unchanged) ---
 			writeJSON(tasksPath, data);
+			
+			// Mark task for sync unless this update was part of a sync operation
+			// Check if the update includes Monday sync fields to avoid marking during sync
+			if (!updatedTask.mondayItemId || !prompt.toLowerCase().includes('monday')) {
+				markTaskForSync(tasksPath, taskId);
+				report('info', `Task ${taskId} marked for Monday.com sync`);
+			}
+			
 			report('success', `Successfully updated task ${taskId}`);
 			await generateTaskFiles(tasksPath, path.dirname(tasksPath));
 			// --- End Write File ---

@@ -1,0 +1,226 @@
+# Task ID: 99
+# Title: Implement MCP Tools for Monday Integration
+# Status: pending
+# Dependencies: 98
+# Priority: medium
+# Description: Create MCP tools for Monday.com integration that can be accessed via Cursor, including sync, status, and configuration tools.
+# Details:
+1. Create `sync-monday.js` MCP tool
+2. Create `monday-status.js` MCP tool
+3. Create `configure-monday.js` MCP tool
+
+MCP tool implementation:
+```javascript
+// mcp-server/src/tools/sync-monday.js
+const { syncPendingTasks, syncTaskById, syncAllTasks } = require('../../../scripts/modules/monday-sync');
+const { loadConfig } = require('../../../scripts/modules/config');
+
+module.exports = {
+  name: 'sync-monday',
+  description: 'Sync tasks to Monday.com',
+  async execute(args) {
+    const taskId = args.taskId;
+    const force = args.force || false;
+    
+    try {
+      const config = loadConfig();
+      
+      if (!config.mondayIntegration || !config.mondayIntegration.boardId) {
+        return {
+          success: false,
+          error: 'Monday.com integration not configured. Use configure-monday tool first.'
+        };
+      }
+      
+      let result;
+      if (taskId) {
+        result = await syncTaskById(parseInt(taskId), config);
+      } else if (force) {
+        result = await syncAllTasks(config);
+      } else {
+        result = await syncPendingTasks(config);
+      }
+      
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+};
+
+// mcp-server/src/tools/monday-status.js
+const { loadConfig } = require('../../../scripts/modules/config');
+const { loadTasks } = require('../../../scripts/modules/tasks');
+
+module.exports = {
+  name: 'monday-status',
+  description: 'Show Monday.com sync status',
+  async execute() {
+    try {
+      const config = loadConfig();
+      
+      if (!config.mondayIntegration || !config.mondayIntegration.boardId) {
+        return {
+          success: false,
+          error: 'Monday.com integration not configured. Use configure-monday tool first.'
+        };
+      }
+      
+      const tasks = loadTasks();
+      const syncedTasks = tasks.filter(t => t.mondayItemId);
+      const pendingTasks = tasks.filter(t => t.syncStatus === 'pending');
+      const errorTasks = tasks.filter(t => t.syncStatus === 'error');
+      
+      return {
+        success: true,
+        boardId: config.mondayIntegration.boardId,
+        stats: {
+          total: tasks.length,
+          synced: syncedTasks.length,
+          pending: pendingTasks.length,
+          error: errorTasks.length
+        },
+        errorTasks: errorTasks.map(t => ({
+          id: t.id,
+          title: t.title,
+          error: t.syncError
+        })),
+        pendingTasks: pendingTasks.map(t => ({
+          id: t.id,
+          title: t.title
+        }))
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+};
+
+// mcp-server/src/tools/configure-monday.js
+const { loadConfig, saveConfig } = require('../../../scripts/modules/config');
+const { MondayClient } = require('../../../scripts/modules/monday-client');
+
+module.exports = {
+  name: 'configure-monday',
+  description: 'Configure Monday.com integration',
+  async execute(args) {
+    const boardId = args.boardId;
+    const token = args.token;
+    
+    if (!boardId) {
+      return {
+        success: false,
+        error: 'Board ID is required'
+      };
+    }
+    
+    try {
+      const config = loadConfig();
+      
+      // Initialize or update Monday integration config
+      config.mondayIntegration = config.mondayIntegration || {};
+      config.mondayIntegration.boardId = boardId;
+      
+      if (token) {
+        config.mondayIntegration.apiToken = token;
+      }
+      
+      // Set default column mappings if not present
+      config.mondayIntegration.columnMapping = config.mondayIntegration.columnMapping || {
+        status: 'status',
+        title: 'name',
+        description: 'notes'
+      };
+      
+      // Set default sync settings if not present
+      config.mondayIntegration.syncSettings = config.mondayIntegration.syncSettings || {
+        autoSync: false,
+        syncSubtasks: false
+      };
+      
+      saveConfig(config);
+      
+      // Validate configuration if token is available
+      const apiToken = token || process.env.MONDAY_API_TOKEN || config.mondayIntegration.apiToken;
+      if (apiToken) {
+        const mondayClient = new MondayClient(apiToken);
+        const connectionTest = await mondayClient.testConnection();
+        
+        if (!connectionTest.success) {
+          return {
+            success: false,
+            error: `Error connecting to Monday.com: ${connectionTest.error}`
+          };
+        }
+        
+        // Test board access
+        const query = `
+          query {
+            boards(ids: [${boardId}]) {
+              id
+              name
+              columns {
+                id
+                title
+                type
+              }
+            }
+          }
+        `;
+        
+        try {
+          const result = await mondayClient._executeWithRateLimit(query);
+          if (!result.boards || result.boards.length === 0) {
+            return {
+              success: false,
+              error: 'Board not found or not accessible'
+            };
+          }
+          
+          return {
+            success: true,
+            message: 'Monday.com integration configured successfully',
+            board: result.boards[0]
+          };
+        } catch (error) {
+          return {
+            success: false,
+            error: `Error accessing board: ${error.message}`
+          };
+        }
+      }
+      
+      return {
+        success: true,
+        message: 'Monday.com integration configured successfully',
+        warning: 'API token not provided - unable to validate board access'
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Error configuring Monday.com integration: ${error.message}`
+      };
+    }
+  }
+};
+```
+
+# Test Strategy:
+1. Create unit tests for MCP tools:
+   - Test tool registration
+   - Test argument handling
+   - Test response formatting
+2. Create integration tests:
+   - Test sync-monday tool with real tasks
+   - Test monday-status tool
+   - Test configure-monday tool
+3. Test via Cursor MCP interface:
+   - Verify tools are accessible through Cursor
+   - Test each tool's functionality
+   - Verify proper error handling and response formatting

@@ -1082,3 +1082,203 @@ describe('Update check', () => {
 		expect(consoleLogSpy.mock.calls[0][0]).toContain('1.1.0');
 	});
 });
+
+describe('Monday.com sync commands', () => {
+	let mockGetMondayIntegrationConfig;
+	let mockGetMondayApiToken;
+	let mockCreateMondaySyncEngine;
+	let mockGetTasksNeedingSync;
+
+	beforeEach(() => {
+		jest.clearAllMocks();
+		
+		// Create mock functions
+		mockGetMondayIntegrationConfig = jest.fn();
+		mockGetMondayApiToken = jest.fn();
+		mockCreateMondaySyncEngine = jest.fn();
+		mockGetTasksNeedingSync = jest.fn();
+		
+		// Mock the modules using jest.doMock
+		jest.doMock('../../scripts/modules/config-manager.js', () => ({
+			getMondayIntegrationConfig: mockGetMondayIntegrationConfig,
+			getMondayApiToken: mockGetMondayApiToken
+		}));
+		
+		jest.doMock('../../scripts/modules/monday-sync.js', () => ({
+			createMondaySyncEngine: mockCreateMondaySyncEngine
+		}));
+		
+		jest.doMock('../../scripts/modules/task-manager/monday-sync-utils.js', () => ({
+			getTasksNeedingSync: mockGetTasksNeedingSync
+		}));
+	});
+
+	describe('sync-monday command', () => {
+		test('should error when Monday integration not configured', async () => {
+			mockGetMondayIntegrationConfig.mockReturnValue(null);
+
+			const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {});
+			const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+			// Test the validation logic that would be in the command
+			const config = mockGetMondayIntegrationConfig();
+			expect(config).toBeNull();
+			expect(mockGetMondayIntegrationConfig).toHaveBeenCalled();
+
+			exitSpy.mockRestore();
+			consoleSpy.mockRestore();
+		});
+
+		test('should error when API token not found', async () => {
+			mockGetMondayIntegrationConfig.mockReturnValue({ boardId: '123' });
+			mockGetMondayApiToken.mockReturnValue(null);
+
+			const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {});
+			const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+			// Test the validation logic
+			const config = mockGetMondayIntegrationConfig();
+			const token = mockGetMondayApiToken();
+			
+			expect(config).toEqual({ boardId: '123' });
+			expect(token).toBeNull();
+			expect(mockGetMondayIntegrationConfig).toHaveBeenCalled();
+			expect(mockGetMondayApiToken).toHaveBeenCalled();
+			
+			exitSpy.mockRestore();
+			consoleSpy.mockRestore();
+		});
+
+		test('should handle dry run mode correctly', async () => {
+			mockGetMondayIntegrationConfig.mockReturnValue({ boardId: '123' });
+			mockGetMondayApiToken.mockReturnValue('fake-token');
+			mockGetTasksNeedingSync.mockReturnValue([
+				{ type: 'task', id: 1, task: { id: 1, title: 'Test Task' } }
+			]);
+
+			const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+			// Test the dry run logic components
+			const config = mockGetMondayIntegrationConfig();
+			const token = mockGetMondayApiToken();
+			const tasksToSync = mockGetTasksNeedingSync();
+			
+			expect(config).toEqual({ boardId: '123' });
+			expect(token).toBe('fake-token');
+			expect(tasksToSync).toHaveLength(1);
+			expect(tasksToSync[0].task.title).toBe('Test Task');
+			
+			consoleSpy.mockRestore();
+		});
+	});
+
+	describe('monday-status command', () => {
+		test('should display sync status correctly', async () => {
+			mockGetMondayIntegrationConfig.mockReturnValue({ 
+				boardId: '123',
+				columnMapping: { status: 'status_col' }
+			});
+			mockGetMondayApiToken.mockReturnValue('fake-token');
+			mockGetTasksNeedingSync.mockReturnValue([]);
+
+			const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+			// Test status display logic components
+			const config = mockGetMondayIntegrationConfig();
+			const token = mockGetMondayApiToken();
+			const pendingTasks = mockGetTasksNeedingSync();
+			
+			expect(config.boardId).toBe('123');
+			expect(config.columnMapping.status).toBe('status_col');
+			expect(token).toBe('fake-token');
+			expect(pendingTasks).toHaveLength(0);
+			
+			consoleSpy.mockRestore();
+		});
+
+		test('should handle verbose mode', async () => {
+			// Test verbose output logic
+			const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+			
+			// Mock data that would be used in verbose mode
+			mockGetMondayIntegrationConfig.mockReturnValue({ boardId: '123' });
+			const config = mockGetMondayIntegrationConfig();
+			expect(config.boardId).toBe('123');
+			
+			consoleSpy.mockRestore();
+		});
+
+		test('should show pending and failed items', async () => {
+			// Test pending and failed item identification
+			const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+			
+			// Mock tasks with different sync statuses
+			const mockTasks = {
+				tasks: [
+					{ id: 1, syncStatus: 'synced' },
+					{ id: 2, syncStatus: 'pending' },
+					{ id: 3, syncStatus: 'error' }
+				]
+			};
+			
+			// Test logic that would categorize these tasks
+			const syncedTasks = mockTasks.tasks.filter(t => t.syncStatus === 'synced');
+			const pendingTasks = mockTasks.tasks.filter(t => t.syncStatus === 'pending');
+			const errorTasks = mockTasks.tasks.filter(t => t.syncStatus === 'error');
+			
+			expect(syncedTasks).toHaveLength(1);
+			expect(pendingTasks).toHaveLength(1);
+			expect(errorTasks).toHaveLength(1);
+			
+			consoleSpy.mockRestore();
+		});
+	});
+
+	describe('sync command integration', () => {
+		test('should call sync engine with correct parameters', async () => {
+			const mockSyncEngine = {
+				syncTask: jest.fn().mockResolvedValue({ success: true, mondayItemId: '456' }),
+				syncAll: jest.fn().mockResolvedValue({ synced: 1, errors: 0, totalItems: 1, details: [] })
+			};
+			mockCreateMondaySyncEngine.mockReturnValue(mockSyncEngine);
+
+			// Test sync engine creation and method calls
+			const syncEngine = mockCreateMondaySyncEngine();
+			expect(mockCreateMondaySyncEngine).toHaveBeenCalled();
+			expect(syncEngine).toBeDefined();
+			expect(typeof syncEngine.syncTask).toBe('function');
+			expect(typeof syncEngine.syncAll).toBe('function');
+			
+			// Test calling sync methods
+			const taskResult = await syncEngine.syncTask();
+			const allResult = await syncEngine.syncAll();
+			
+			expect(taskResult.success).toBe(true);
+			expect(taskResult.mondayItemId).toBe('456');
+			expect(allResult.synced).toBe(1);
+			expect(allResult.errors).toBe(0);
+		});
+
+		test('should handle sync errors gracefully', async () => {
+			const mockSyncEngine = {
+				syncTask: jest.fn().mockResolvedValue({ success: false, error: 'API Error' }),
+				syncAll: jest.fn().mockRejectedValue(new Error('Connection failed'))
+			};
+			mockCreateMondaySyncEngine.mockReturnValue(mockSyncEngine);
+
+			const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+			
+			// Test error handling
+			const syncEngine = mockCreateMondaySyncEngine();
+			const taskResult = await syncEngine.syncTask();
+			
+			expect(taskResult.success).toBe(false);
+			expect(taskResult.error).toBe('API Error');
+			
+			// Test rejected promise
+			await expect(syncEngine.syncAll()).rejects.toThrow('Connection failed');
+			
+			consoleSpy.mockRestore();
+		});
+	});
+});

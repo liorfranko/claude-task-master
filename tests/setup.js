@@ -4,6 +4,10 @@
  * This file is run before each test suite to set up the test environment.
  */
 
+// Load environment variables from .env file
+import dotenv from 'dotenv';
+dotenv.config();
+
 // Mock environment variables
 process.env.MODEL = 'sonar-pro';
 process.env.MAX_TOKENS = '64000';

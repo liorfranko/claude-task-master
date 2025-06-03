@@ -1,0 +1,208 @@
+# Task ID: 116
+# Title: Implement Error Handling and Offline Support
+# Status: pending
+# Dependencies: 108, 110, 111
+# Priority: medium
+# Description: Enhance the Monday.com integration with robust error handling and offline support for all persistence modes.
+# Details:
+Implement comprehensive error handling and offline support:  
+1. Add graceful degradation when Monday.com is unavailable  
+2. Implement offline mode detection and recovery  
+3. Add retry mechanisms for transient errors  
+4. Enhance logging and error reporting  
+5. Add offline queue for operations when disconnected  
+
+Implementation:  
+```javascript
+// Enhance monday-client.js with offline detection and retry
+
+class MondayClient {
+  constructor(config) {
+    // Existing initialization
+    
+    // Offline handling
+    this.isOffline = false;
+    this.offlineQueue = [];
+    this.maxRetries = 3;
+    this.retryDelay = 2000; // 2 seconds
+  }
+  
+  async request(query, variables, retries = 0) {
+    if (this.isOffline && retries === 0) {
+      // Queue request if offline
+      this.offlineQueue.push({ query, variables });
+      throw new Error('Currently offline. Request queued for later.');
+    }
+    
+    try {
+      return await this.throttledRequest(query, variables);
+    } catch (error) {
+      // Check if it's a network error
+      if (error.message.includes('ECONNREFUSED') || 
+          error.message.includes('ETIMEDOUT') || 
+          error.message.includes('network') ||
+          error.response?.status >= 500) {
+        
+        // Mark as offline
+        if (!this.isOffline) {
+          this.isOffline = true;
+          console.warn('Monday.com API appears to be offline or unreachable.');
+        }
+        
+        // Retry if we haven't exceeded max retries
+        if (retries < this.maxRetries) {
+          console.log(`Retrying request (${retries + 1}/${this.maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, this.retryDelay * Math.pow(2, retries)));
+          return this.request(query, variables, retries + 1);
+        }
+        
+        // Queue request if max retries exceeded
+        this.offlineQueue.push({ query, variables });
+        throw new Error(`Failed after ${this.maxRetries} retries. Request queued for later.`);
+      }
+      
+      // Handle rate limiting
+      if (error.response?.status === 429) {
+        const retryAfter = parseInt(error.response.headers['retry-after'] || '2');
+        console.log(`Rate limited. Retrying after ${retryAfter} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+        return this.request(query, variables, retries);
+      }
+      
+      // Other errors
+      throw error;
+    }
+  }
+  
+  async checkConnection() {
+    try {
+      await this.request('query { me { name } }');
+      
+      // If we get here, we're online
+      if (this.isOffline) {
+        this.isOffline = false;
+        console.log('Connection to Monday.com restored.');
+        
+        // Process offline queue
+        await this.processOfflineQueue();
+      }
+      
+      return true;
+    } catch (error) {
+      this.isOffline = true;
+      return false;
+    }
+  }
+  
+  async processOfflineQueue() {
+    if (this.offlineQueue.length === 0) {
+      return;
+    }
+    
+    console.log(`Processing offline queue (${this.offlineQueue.length} requests)...`);
+    
+    const queue = [...this.offlineQueue];
+    this.offlineQueue = [];
+    
+    for (const request of queue) {
+      try {
+        await this.request(request.query, request.variables);
+        console.log('Queued request processed successfully.');
+      } catch (error) {
+        console.error('Failed to process queued request:', error.message);
+        // Re-queue if it's a network error
+        if (error.message.includes('offline') || this.isOffline) {
+          this.offlineQueue.push(request);
+        }
+      }
+    }
+    
+    console.log(`Offline queue processing completed. ${this.offlineQueue.length} requests remaining.`);
+  }
+}
+```
+
+Enhance hybrid storage provider with offline support:  
+```javascript
+class HybridStorageProvider {
+  // Existing methods
+  
+  async getTasks() {
+    // Try to sync if we're online
+    try {
+      const isOnline = await this.mondayClient.checkConnection();
+      
+      if (isOnline) {
+        await this.syncEngine.syncAll();
+      } else {
+        console.log('Working in offline mode. Changes will be synced when connection is restored.');
+      }
+    } catch (error) {
+      console.warn('Could not sync with Monday.com:', error.message);
+    }
+    
+    // Always return local tasks
+    return this.localProvider.getTasks();
+  }
+  
+  async createTask(taskData) {
+    // Create in local first
+    const localTask = await this.localProvider.createTask(taskData);
+    
+    try {
+      // Check connection
+      const isOnline = await this.mondayClient.checkConnection();
+      
+      if (isOnline) {
+        // Create in Monday
+        const mondayTask = await this.mondayProvider.createTask(taskData);
+        
+        // Update local with Monday ID
+        const syncedTask = {
+          ...localTask,
+          mondayItemId: mondayTask.mondayItemId,
+          lastSyncedAt: new Date().toISOString(),
+          syncStatus: 'synced',
+          lastModifiedLocal: new Date().toISOString()
+        };
+        
+        await this.localProvider.updateTask(localTask.id, syncedTask);
+        return syncedTask;
+      } else {
+        // Mark as pending sync
+        const pendingTask = {
+          ...localTask,
+          syncStatus: 'pending',
+          lastModifiedLocal: new Date().toISOString()
+        };
+        
+        await this.localProvider.updateTask(localTask.id, pendingTask);
+        return pendingTask;
+      }
+    } catch (error) {
+      console.error('Could not create task in Monday.com:', error.message);
+      
+      // Mark as pending sync
+      const pendingTask = {
+        ...localTask,
+        syncStatus: 'pending',
+        lastModifiedLocal: new Date().toISOString()
+      };
+      
+      await this.localProvider.updateTask(localTask.id, pendingTask);
+      return pendingTask;
+    }
+  }
+  
+  // Similar pattern for other CRUD methods
+}
+```
+
+# Test Strategy:
+1. Test offline detection with network disconnection  
+2. Test retry mechanism with temporary failures  
+3. Test offline queue processing when connection is restored  
+4. Test graceful degradation in hybrid mode  
+5. Test with real Monday.com API using test board 9275265350  
+6. Test error reporting and logging  
+7. Test recovery from various error scenarios
