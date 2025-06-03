@@ -2131,11 +2131,11 @@ function displayPersistenceConfiguration(persistenceConfig, mondayConfig) {
 		console.log(`API Token: ${tokenStatus}`);
 		
 		// Display sync settings
-		const syncSettings = mondayConfig.syncSettings || {};
-		const autoSync = syncSettings.autoSync 
-			? `${chalk.green('✅')} Enabled`
-			: `${chalk.gray('❌')} Disabled`;
-		const conflictResolution = syncSettings.conflictResolution || 'manual';
+		const hybridConfig = persistenceConfig.persistence?.hybridConfig || {};
+		const autoSync = hybridConfig.autoSync
+			? chalk.green('Enabled')
+			: chalk.gray('Disabled');
+		const conflictResolution = hybridConfig.conflictResolution || 'manual';
 		
 		console.log(`Auto Sync: ${autoSync}`);
 		console.log(`Conflict Resolution: ${chalk.white(conflictResolution)}`);
