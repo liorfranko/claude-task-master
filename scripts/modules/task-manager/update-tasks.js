@@ -23,6 +23,7 @@ import { getDebugFlag } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 import { generateTextService } from '../ai-services-unified.js';
 import { getModelConfiguration } from './models.js';
+import { onTaskUpdated } from './auto-sync-hooks.js';
 
 // Zod schema for validating the structure of tasks AFTER parsing
 const updatedTaskSchema = z
@@ -430,6 +431,26 @@ The changes described in the prompt should be applied to ALL tasks in the list.`
 					'success',
 					`Successfully updated ${actualUpdateCount} tasks in ${tasksPath}`
 				);
+
+			// Call auto-sync hooks for each updated task
+			if (projectRoot) {
+				for (const task of parsedUpdatedTasks) {
+					try {
+						await onTaskUpdated(projectRoot, task, {
+							session: session,
+							mcpLog: mcpLog,
+							throwOnError: false // Don't throw errors in update-tasks, just log them
+						});
+					} catch (error) {
+						if (isMCP) {
+							logFn.warn(`Auto-sync failed for task ${task.id}: ${error.message}`);
+						} else {
+							logFn('warn', `Auto-sync failed for task ${task.id}: ${error.message}`);
+						}
+					}
+				}
+			}
+
 			await generateTaskFiles(tasksPath, path.dirname(tasksPath));
 
 			if (outputFormat === 'text' && aiServiceResponse.telemetryData) {

@@ -4,6 +4,8 @@
  */
 
 import { updateSubtaskById } from '../../../../scripts/modules/task-manager.js';
+import { onSubtaskUpdated } from '../../../../scripts/modules/task-manager/auto-sync-hooks.js';
+import { readJSON } from '../../../../scripts/modules/utils.js';
 import {
 	enableSilentMode,
 	disableSilentMode,
@@ -125,6 +127,24 @@ export async function updateSubtaskByIdDirect(args, log, context = {}) {
 					success: false,
 					error: { code: 'SUBTASK_NOT_FOUND', message: message }
 				};
+			}
+
+			// Call auto-sync hook for subtask update
+			if (projectRoot && coreResult.updatedSubtask) {
+				try {
+					const data = readJSON(tasksPath);
+					const parentId = parseInt(subtaskIdStr.split('.')[0], 10);
+					const parentTask = data.tasks.find(t => t.id === parentId);
+					
+					if (parentTask) {
+						await onSubtaskUpdated(projectRoot, parentTask, coreResult.updatedSubtask, {
+							session,
+							mcpLog: log
+						});
+					}
+				} catch (syncError) {
+					logWrapper.warn(`Auto-sync failed for updated subtask: ${syncError.message}`);
+				}
 			}
 
 			// Subtask updated successfully

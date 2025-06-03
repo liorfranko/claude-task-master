@@ -20,12 +20,15 @@ import {
  * @param {Object} args - Command arguments
  * @param {string} args.tasksJsonPath - Explicit path to the tasks.json file.
  * @param {string} args.id - The ID(s) of the task(s) or subtask(s) to remove (comma-separated for multiple).
+ * @param {string} args.projectRoot - Project root path for auto-sync hooks.
  * @param {Object} log - Logger object
+ * @param {Object} context - Context object containing session data.
  * @returns {Promise<Object>} - Remove task result { success: boolean, data?: any, error?: { code: string, message: string } }
  */
-export async function removeTaskDirect(args, log) {
+export async function removeTaskDirect(args, log, context = {}) {
 	// Destructure expected args
-	const { tasksJsonPath, id } = args;
+	const { tasksJsonPath, id, projectRoot } = args;
+	const { session } = context;
 	try {
 		// Check if tasksJsonPath was provided
 		if (!tasksJsonPath) {
@@ -93,7 +96,11 @@ export async function removeTaskDirect(args, log) {
 		try {
 			for (const taskId of taskIdArray) {
 				try {
-					const result = await removeTask(tasksJsonPath, taskId);
+					const result = await removeTask(tasksJsonPath, taskId, {
+						session,
+						mcpLog: log,
+						projectRoot
+					});
 					results.push({
 						taskId,
 						success: true,

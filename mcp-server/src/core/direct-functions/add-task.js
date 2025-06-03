@@ -95,6 +95,8 @@ export async function addTaskDirect(args, log, context = {}) {
 		let manualTaskData = null;
 		let newTaskId;
 		let telemetryData;
+		let syncSuccess;
+		let syncError;
 
 		if (isManualCreation) {
 			// Create manual task data object
@@ -129,6 +131,8 @@ export async function addTaskDirect(args, log, context = {}) {
 			);
 			newTaskId = result.newTaskId;
 			telemetryData = result.telemetryData;
+			syncSuccess = result.syncSuccess;
+			syncError = result.syncError;
 		} else {
 			// AI-driven task creation
 			log.info(
@@ -154,16 +158,31 @@ export async function addTaskDirect(args, log, context = {}) {
 			);
 			newTaskId = result.newTaskId;
 			telemetryData = result.telemetryData;
+			syncSuccess = result.syncSuccess;
+			syncError = result.syncError;
 		}
 
 		// Restore normal logging
 		disableSilentMode();
+
+		// Log sync results for debugging
+		if (syncSuccess === true) {
+			log.info(`Task ${newTaskId} successfully synced to Monday.com`);
+		} else if (syncSuccess === false && syncError) {
+			log.warn(`Task ${newTaskId} sync failed: ${syncError}`);
+		} else if (syncSuccess === false) {
+			log.info(`Task ${newTaskId} sync skipped (auto-sync disabled)`);
+		}
 
 		return {
 			success: true,
 			data: {
 				taskId: newTaskId,
 				message: `Successfully added new task #${newTaskId}`,
+				syncStatus: {
+					success: syncSuccess,
+					error: syncError
+				},
 				telemetryData: telemetryData
 			}
 		};

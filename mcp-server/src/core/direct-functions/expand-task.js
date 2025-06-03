@@ -4,6 +4,7 @@
  */
 
 import expandTask from '../../../../scripts/modules/task-manager/expand-task.js';
+import { onSubtaskCreated } from '../../../../scripts/modules/task-manager/auto-sync-hooks.js';
 import {
 	readJSON,
 	writeJSON,
@@ -214,6 +215,52 @@ export async function expandTaskDirect(args, log, context = {}) {
 			const subtasksAdded = updatedTask.subtasks
 				? updatedTask.subtasks.length - subtasksCountBefore
 				: 0;
+
+			// Call auto-sync hook for newly created subtasks
+			if (projectRoot && updatedTask && updatedTask.subtasks && subtasksAdded > 0) {
+				try {
+					log.info(`Auto-syncing ${subtasksAdded} newly created subtasks to Monday.com...`);
+					
+					// Determine which subtasks are new
+					let newSubtasks;
+					if (forceFlag) {
+						// If force flag was used, all subtasks are considered new
+						newSubtasks = updatedTask.subtasks;
+					} else {
+						// Otherwise, only the subtasks added after the existing count are new
+						newSubtasks = updatedTask.subtasks.slice(subtasksCountBefore);
+					}
+
+					let syncedCount = 0;
+					let failedCount = 0;
+
+					// Sync each new subtask individually
+					for (const subtask of newSubtasks) {
+						try {
+							await onSubtaskCreated(projectRoot, updatedTask, subtask, {
+								session,
+								mcpLog: log,
+								throwOnError: false
+							});
+							syncedCount++;
+						} catch (syncError) {
+							failedCount++;
+							log.warn(`Auto-sync failed for subtask ${updatedTask.id}.${subtask.id}: ${syncError.message}`);
+						}
+					}
+
+					// Log sync results
+					if (syncedCount > 0) {
+						log.info(`✅ ${syncedCount} subtask(s) successfully synced to Monday.com`);
+					}
+					if (failedCount > 0) {
+						log.warn(`⚠️ ${failedCount} subtask(s) created locally, but sync to Monday.com failed`);
+					}
+
+				} catch (syncError) {
+					log.warn(`Auto-sync process failed: ${syncError.message}`);
+				}
+			}
 
 			// Return the result, including telemetryData
 			log.info(

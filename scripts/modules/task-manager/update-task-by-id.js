@@ -27,6 +27,7 @@ import {
 } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 import { markTaskForSync } from './monday-sync-utils.js';
+import { onTaskUpdated } from './auto-sync-hooks.js';
 
 // Zod schema for post-parsing validation of the updated task object
 const updatedTaskSchema = z
@@ -486,8 +487,27 @@ The changes described in the prompt should be thoughtfully applied to make the t
 				markTaskForSync(tasksPath, taskId);
 				report('info', `Task ${taskId} marked for Monday.com sync`);
 			}
-			
-			report('success', `Successfully updated task ${taskId}`);
+
+			// Call auto-sync hook if enabled
+			try {
+				const syncSuccess = await onTaskUpdated(
+					projectRoot,
+					updatedTask,
+					{
+						session,
+						mcpLog,
+						throwOnError: false // Don't throw errors, just log them
+					}
+				);
+				
+				if (syncSuccess && outputFormat === 'text') {
+					console.log(`✅ Task ${taskId} successfully synced to Monday.com`);
+				}
+			} catch (error) {
+				report('warn', `Auto-sync failed for task ${taskId}: ${error.message}`);
+			}
+
+			// --- Generate markdown task files ---
 			await generateTaskFiles(tasksPath, path.dirname(tasksPath));
 			// --- End Write File ---
 

@@ -12,11 +12,12 @@ import {
 	stopLoadingIndicator,
 	displayAiUsageSummary
 } from '../ui.js';
-import { readJSON, writeJSON, log as consoleLog, truncate } from '../utils.js';
+import { readJSON, writeJSON, log as consoleLog, truncate, findProjectRoot } from '../utils.js';
 import { generateObjectService } from '../ai-services-unified.js';
 import { getDefaultPriority } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 import { extendTaskWithMondayFields } from './monday-sync-utils.js';
+import { onTaskCreated } from './auto-sync-hooks.js';
 
 // Define Zod schema for the expected AI output object
 const AiTaskDataSchema = z.object({
@@ -1037,6 +1038,33 @@ async function addTask(
 		writeJSON(tasksPath, data);
 		report('DEBUG: tasks.json written.', 'debug');
 
+		// Trigger automatic sync hook for the new task
+		let syncSuccess = false;
+		let syncError = null;
+		try {
+			// Determine project root for sync hooks
+			const taskProjectRoot = projectRoot || findProjectRoot(path.dirname(tasksPath));
+			
+			// Call the auto-sync hook for task creation
+			syncSuccess = await onTaskCreated(
+				taskProjectRoot,
+				newTask,
+				{
+					session,
+					mcpLog,
+					throwOnError: false // Don't throw errors in add-task, just log them
+				}
+			);
+			
+			if (syncSuccess) {
+				report(`✅ Task ${newTaskId} successfully synced to Monday.com`, 'info');
+			}
+		} catch (error) {
+			syncError = error.message;
+			report(`⚠️ Auto-sync failed for task ${newTaskId}: ${error.message}`, 'warn');
+			// Continue with task creation even if sync fails
+		}
+
 		// Generate markdown task files
 		report('Generating task files...', 'info');
 		report('DEBUG: Calling generateTaskFiles...', 'debug');
@@ -1158,6 +1186,13 @@ async function addTask(
 						'\n\n' +
 						dependencyDisplay +
 						dependencyAnalysis +
+						(syncSuccess === true 
+							? '\n' + chalk.green('✅ Synced to Monday.com')
+							: syncSuccess === false && !syncError
+							? '\n' + chalk.yellow('⚠️ Monday.com sync skipped (not in hybrid mode)')
+							: syncError
+							? '\n' + chalk.red(`❌ Monday.com sync failed: ${syncError}`)
+							: '') +
 						'\n' +
 						chalk.white.bold('Next Steps:') +
 						'\n' +
@@ -1192,7 +1227,9 @@ async function addTask(
 		);
 		return {
 			newTaskId: newTaskId,
-			telemetryData: aiServiceResponse ? aiServiceResponse.telemetryData : null
+			telemetryData: aiServiceResponse ? aiServiceResponse.telemetryData : null,
+			syncSuccess: syncSuccess,
+			syncError: syncError
 		};
 	} catch (error) {
 		// Stop any loading indicator on error

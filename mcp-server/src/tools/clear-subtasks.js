@@ -62,10 +62,12 @@ export function registerClearSubtasksTool(server) {
 				const result = await clearSubtasksDirect(
 					{
 						tasksJsonPath: tasksJsonPath,
+						projectRoot: args.projectRoot,
 						id: args.id,
 						all: args.all
 					},
-					log
+					log,
+					{ session }
 				);
 
 				if (result.success) {

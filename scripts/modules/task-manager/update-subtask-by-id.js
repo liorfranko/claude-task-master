@@ -20,6 +20,7 @@ import {
 import { generateTextService } from '../ai-services-unified.js';
 import { getDebugFlag } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
+import { onSubtaskUpdated } from './auto-sync-hooks.js';
 
 /**
  * Update a subtask by appending additional timestamped information using the unified AI service.
@@ -296,6 +297,19 @@ Output Requirements:
 
 		report('success', `Successfully updated subtask ${subtaskId}`);
 		await generateTaskFiles(tasksPath, path.dirname(tasksPath));
+
+		// Call auto-sync hook for subtask update
+		if (projectRoot) {
+			try {
+				await onSubtaskUpdated(projectRoot, parentTask, updatedSubtask, {
+					session,
+					mcpLog,
+					throwOnError: false // Don't throw errors, just log them
+				});
+			} catch (syncError) {
+				report('warn', `Auto-sync failed for subtask ${subtaskId} update: ${syncError.message}`);
+			}
+		}
 
 		if (outputFormat === 'text') {
 			if (loadingIndicator) {

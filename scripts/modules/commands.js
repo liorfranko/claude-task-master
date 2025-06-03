@@ -105,6 +105,7 @@ import {
 	TASK_STATUS_OPTIONS
 } from '../../src/constants/task-status.js';
 import { getTaskMasterVersion } from '../../src/utils/getVersion.js';
+import { onTaskUpdated, onSubtaskCreated, onTaskCreated, onTaskDeleted, onSubtaskUpdated, onSubtaskDeleted } from './task-manager/auto-sync-hooks.js';
 
 /**
  * Runs the interactive setup process for model configuration.
@@ -860,13 +861,15 @@ function registerCommands(programInstance) {
 				);
 			}
 
-			// Call core updateTasks, passing empty context for CLI
+			// Call core updateTasks, passing projectRoot context for auto-sync hooks
 			await updateTasks(
 				tasksPath,
 				fromId,
 				prompt,
 				useResearch,
-				{} // Pass empty context
+				{
+					projectRoot: findProjectRoot(path.dirname(tasksPath))
+				}
 			);
 		});
 
@@ -986,7 +989,10 @@ function registerCommands(programInstance) {
 					tasksPath,
 					taskId,
 					prompt,
-					useResearch
+					useResearch,
+					{
+						projectRoot: findProjectRoot(path.dirname(tasksPath))
+					}
 				);
 
 				// If the task wasn't updated (e.g., if it was already marked as done)
@@ -1145,7 +1151,10 @@ function registerCommands(programInstance) {
 					tasksPath,
 					subtaskId,
 					prompt,
-					useResearch
+					useResearch,
+					{
+						projectRoot: findProjectRoot(path.dirname(tasksPath))
+					}
 				);
 
 				if (!result) {
@@ -1322,6 +1331,14 @@ function registerCommands(programInstance) {
 			if (options.all) {
 				// --- Handle expand --all ---
 				console.log(chalk.blue('Expanding all pending tasks...'));
+				
+				// Read tasks before expansion to track which subtasks are new
+				const dataBeforeExpansion = readJSON(tasksPath);
+				const tasksBeforeExpansion = {};
+				dataBeforeExpansion.tasks.forEach(task => {
+					tasksBeforeExpansion[task.id] = task.subtasks ? task.subtasks.length : 0;
+				});
+
 				// Updated call to the refactored expandAllTasks
 				try {
 					const result = await expandAllTasks(
@@ -1330,9 +1347,62 @@ function registerCommands(programInstance) {
 						options.research, // Pass research flag
 						options.prompt, // Pass additional context
 						options.force, // Pass force flag
-						{} // Pass empty context for CLI calls
+						{ projectRoot } // Pass projectRoot in context for sync hooks
 						// outputFormat defaults to 'text' in expandAllTasks for CLI
 					);
+
+					// Auto-sync integration for newly created subtasks from all expanded tasks
+					if (result && result.expandedCount > 0) {
+						try {
+							console.log(chalk.blue('Auto-syncing newly created subtasks from expanded tasks to Monday.com...'));
+							
+							// Read the updated tasks to get the expanded subtasks
+							const dataAfterExpansion = readJSON(tasksPath);
+							let totalSyncedCount = 0;
+							let totalFailedCount = 0;
+
+							// Process only tasks that were actually expanded
+							for (const task of dataAfterExpansion.tasks) {
+								if (task.subtasks && task.subtasks.length > 0) {
+									const previousSubtaskCount = tasksBeforeExpansion[task.id] || 0;
+									let newSubtasks;
+
+									if (options.force) {
+										// If force was used, all subtasks are new
+										newSubtasks = task.subtasks;
+									} else {
+										// Only the subtasks added after the existing ones are new
+										newSubtasks = task.subtasks.slice(previousSubtaskCount);
+									}
+
+									// Sync only the new subtasks
+									for (const subtask of newSubtasks) {
+										try {
+											await onSubtaskCreated(projectRoot, task, subtask, {
+												throwOnError: false
+											});
+											totalSyncedCount++;
+										} catch (syncError) {
+											totalFailedCount++;
+											log('debug', `Auto-sync error for subtask ${task.id}.${subtask.id}: ${syncError.message}`);
+										}
+									}
+								}
+							}
+
+							// Provide user feedback for bulk sync
+							if (totalSyncedCount > 0) {
+								console.log(chalk.cyan(`📤 ${totalSyncedCount} subtask(s) automatically synced to Monday.com`));
+							}
+							if (totalFailedCount > 0) {
+								console.log(chalk.yellow(`⚠️ ${totalFailedCount} subtask(s) created locally, but sync to Monday.com failed`));
+							}
+
+						} catch (syncError) {
+							console.log(chalk.yellow('⚠️ Subtasks created locally, but bulk sync to Monday.com failed'));
+							log('debug', `Bulk auto-sync error: ${syncError.message}`);
+						}
+					}
 				} catch (error) {
 					console.error(
 						chalk.red(`Error expanding all tasks: ${error.message}`)
@@ -1350,16 +1420,66 @@ function registerCommands(programInstance) {
 
 				console.log(chalk.blue(`Expanding task ${options.id}...`));
 				try {
+					// Read the task before expansion to determine which subtasks are new
+					const dataBefore = readJSON(tasksPath);
+					const taskBefore = dataBefore.tasks.find(t => t.id === parseInt(options.id, 10));
+					const existingSubtaskCount = taskBefore?.subtasks?.length || 0;
+
 					// Call the refactored expandTask function
-					await expandTask(
+					const result = await expandTask(
 						tasksPath,
 						options.id,
 						options.num,
 						options.research,
 						options.prompt,
-						{}, // Pass empty context for CLI calls
+						{ projectRoot }, // Pass projectRoot in context for sync hooks
 						options.force // Pass the force flag down
 					);
+
+					// Auto-sync integration for newly created subtasks
+					if (result && result.task && result.task.subtasks && result.task.subtasks.length > 0) {
+						try {
+							console.log(chalk.blue('Auto-syncing newly created subtasks to Monday.com...'));
+							
+							// Determine which subtasks are new
+							let newSubtasks;
+							if (options.force) {
+								// If force was used, all subtasks are new
+								newSubtasks = result.task.subtasks;
+							} else {
+								// Only the subtasks added after the existing ones are new
+								newSubtasks = result.task.subtasks.slice(existingSubtaskCount);
+							}
+
+							let syncedCount = 0;
+							let failedCount = 0;
+
+							for (const subtask of newSubtasks) {
+								try {
+									await onSubtaskCreated(projectRoot, result.task, subtask, {
+										throwOnError: false
+									});
+									syncedCount++;
+								} catch (syncError) {
+									failedCount++;
+									log('debug', `Auto-sync error for subtask ${result.task.id}.${subtask.id}: ${syncError.message}`);
+								}
+							}
+
+							// Provide user feedback for bulk sync
+							if (syncedCount > 0) {
+								console.log(chalk.cyan(`📤 ${syncedCount} subtask(s) automatically synced to Monday.com`));
+							}
+							if (failedCount > 0) {
+								console.log(chalk.yellow(`⚠️ ${failedCount} subtask(s) created locally, but sync to Monday.com failed`));
+							}
+
+						} catch (syncError) {
+							console.log(chalk.yellow('⚠️ Subtasks created locally, but sync to Monday.com failed'));
+							log('debug', `Auto-sync error: ${syncError.message}`);
+						}
+					}
+
 					// expandTask logs its own success/failure for single task
 				} catch (error) {
 					console.error(
@@ -1477,9 +1597,18 @@ function registerCommands(programInstance) {
 					process.exit(1);
 				}
 				const allIds = data.tasks.map((t) => t.id).join(',');
-				clearSubtasks(tasksPath, allIds);
+				
+				// Determine project root for sync hooks
+				const projectRoot = findProjectRoot();
+				const context = { projectRoot };
+				
+				await clearSubtasks(tasksPath, allIds, context);
 			} else {
-				clearSubtasks(tasksPath, taskIds);
+				// Determine project root for sync hooks
+				const projectRoot = findProjectRoot();
+				const context = { projectRoot };
+				
+				await clearSubtasks(tasksPath, taskIds, context);
 			}
 		});
 
@@ -1828,7 +1957,7 @@ function registerCommands(programInstance) {
 							`Converting task ${existingTaskId} to a subtask of ${parentId}...`
 						)
 					);
-					await addSubtask(
+					const subtask = await addSubtask(
 						tasksPath,
 						parentId,
 						existingTaskId,
@@ -1836,10 +1965,27 @@ function registerCommands(programInstance) {
 						generateFiles
 					);
 					console.log(
-						chalk.green(
-							`✓ Task ${existingTaskId} successfully converted to a subtask of task ${parentId}`
-						)
-					);
+							chalk.green(
+								`✓ Task ${existingTaskId} successfully converted to a subtask of task ${parentId}`
+							)
+						);
+
+					// Auto-sync integration for task conversion
+					try {
+						const projectRoot = findProjectRoot(path.dirname(tasksPath)) || process.cwd();
+						const data = readJSON(tasksPath);
+						const parentTask = data.tasks.find(t => t.id === parseInt(parentId, 10));
+						
+						if (parentTask && subtask) {
+							await onSubtaskCreated(projectRoot, parentTask, subtask, {
+								throwOnError: false
+							});
+							console.log(chalk.cyan('📤 Subtask automatically synced to Monday.com'));
+						}
+					} catch (syncError) {
+						console.log(chalk.yellow('⚠️ Subtask created locally, but sync to Monday.com failed'));
+						log('debug', `Auto-sync error: ${syncError.message}`);
+					}
 				} else if (options.title) {
 					// Create new subtask with provided data
 					console.log(
@@ -1866,6 +2012,23 @@ function registerCommands(programInstance) {
 							`✓ New subtask ${parentId}.${subtask.id} successfully created`
 						)
 					);
+
+					// Auto-sync integration for new subtask creation
+					try {
+						const projectRoot = findProjectRoot(path.dirname(tasksPath)) || process.cwd();
+						const data = readJSON(tasksPath);
+						const parentTask = data.tasks.find(t => t.id === parseInt(parentId, 10));
+						
+						if (parentTask && subtask) {
+							await onSubtaskCreated(projectRoot, parentTask, subtask, {
+								throwOnError: false
+							});
+							console.log(chalk.cyan('📤 Subtask automatically synced to Monday.com'));
+						}
+					} catch (syncError) {
+						console.log(chalk.yellow('⚠️ Subtask created locally, but sync to Monday.com failed'));
+						log('debug', `Auto-sync error: ${syncError.message}`);
+					}
 
 					// Display success message and suggested next steps
 					console.log(
@@ -2281,7 +2444,13 @@ function registerCommands(programInstance) {
 				const existingIdsString = existingTasksToRemove
 					.map(({ id }) => id)
 					.join(',');
-				const result = await removeTask(tasksPath, existingIdsString);
+				
+				// Determine project root for auto-sync hooks
+				const projectRoot = findProjectRoot(path.dirname(tasksPath));
+				
+				const result = await removeTask(tasksPath, existingIdsString, {
+					projectRoot
+				});
 
 				stopLoadingIndicator(indicator);
 
@@ -3058,7 +3227,7 @@ Examples:
 							chalk.blue(`Moving task/subtask ${fromId} to ${toId}...`)
 						);
 						try {
-							await moveTask(
+							const movedTaskResult = await moveTask(
 								tasksPath,
 								fromId,
 								toId,
@@ -3069,6 +3238,25 @@ Examples:
 									`✓ Successfully moved task/subtask ${fromId} to ${toId}`
 								)
 							);
+
+							// Auto-sync the moved task to Monday.com if enabled
+							try {
+								const projectRoot = findProjectRoot(path.dirname(tasksPath)) || path.dirname(tasksPath);
+								
+								// Call onTaskUpdated hook for the moved task (all moves result in task updates)
+								if (movedTaskResult) {
+									const syncSuccess = await onTaskUpdated(projectRoot, movedTaskResult, {
+										throwOnError: false
+									});
+									if (syncSuccess) {
+										console.log(chalk.cyan('📤 Move automatically synced to Monday.com'));
+									} else {
+										console.log(chalk.yellow('⚠️ Move completed locally, but sync to Monday.com failed'));
+									}
+								}
+							} catch (syncError) {
+								console.log(chalk.yellow(`⚠️ Move completed, but auto-sync failed: ${syncError.message}`));
+							}
 						} catch (error) {
 							console.error(
 								chalk.red(`Error moving ${fromId} to ${toId}: ${error.message}`)
@@ -3098,6 +3286,25 @@ Examples:
 							`✓ Successfully moved task/subtask ${sourceId} to ${destinationId}`
 						)
 					);
+
+					// Auto-sync the moved task to Monday.com if enabled
+					try {
+						const projectRoot = findProjectRoot(path.dirname(tasksPath)) || path.dirname(tasksPath);
+						
+						// Call onTaskUpdated hook for the moved task (all moves result in task updates)
+						if (result) {
+							const syncSuccess = await onTaskUpdated(projectRoot, result, {
+								throwOnError: false
+							});
+							if (syncSuccess) {
+								console.log(chalk.cyan('📤 Move automatically synced to Monday.com'));
+							} else {
+								console.log(chalk.yellow('⚠️ Move completed locally, but sync to Monday.com failed'));
+							}
+						}
+					} catch (syncError) {
+						console.log(chalk.yellow(`⚠️ Move completed, but auto-sync failed: ${syncError.message}`));
+					}
 				} catch (error) {
 					console.error(chalk.red(`Error: ${error.message}`));
 					process.exit(1);

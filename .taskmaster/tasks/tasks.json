@@ -25,9 +25,9 @@
         }
       ],
       "previousStatus": "in-progress",
-      "syncStatus": "pending",
+      "syncStatus": "synced",
       "mondayItemId": "9285082755",
-      "lastSyncedAt": "2025-06-03T08:44:59.385Z",
+      "lastSyncedAt": "2025-06-03T20:21:47.559Z",
       "syncError": null
     },
     {
@@ -2021,7 +2021,10 @@
           "syncStatus": "pending"
         }
       ],
-      "syncStatus": "pending"
+      "syncStatus": "synced",
+      "mondayItemId": "9296138420",
+      "lastSyncedAt": "2025-06-03T20:47:53.705Z",
+      "syncError": null
     },
     {
       "id": 24,
@@ -2094,7 +2097,10 @@
           "syncStatus": "pending"
         }
       ],
-      "syncStatus": "pending"
+      "syncStatus": "synced",
+      "mondayItemId": "9296139552",
+      "lastSyncedAt": "2025-06-03T20:47:59.877Z",
+      "syncError": null
     },
     {
       "id": 25,
@@ -2169,7 +2175,10 @@
           "syncStatus": "pending"
         }
       ],
-      "syncStatus": "pending"
+      "syncStatus": "synced",
+      "mondayItemId": "9296140526",
+      "lastSyncedAt": "2025-06-03T20:48:06.510Z",
+      "syncError": null
     },
     {
       "id": 26,
@@ -2226,7 +2235,10 @@
           "syncStatus": "pending"
         }
       ],
-      "syncStatus": "pending"
+      "syncStatus": "synced",
+      "mondayItemId": "9296141609",
+      "lastSyncedAt": "2025-06-03T20:48:12.365Z",
+      "syncError": null
     },
     {
       "id": 27,
@@ -2281,7 +2293,10 @@
           "syncStatus": "pending"
         }
       ],
-      "syncStatus": "pending"
+      "syncStatus": "synced",
+      "mondayItemId": "9296142790",
+      "lastSyncedAt": "2025-06-03T20:48:19.827Z",
+      "syncError": null
     },
     {
       "id": 28,
@@ -6563,16 +6578,219 @@
     {
       "id": 127,
       "title": "Implement hybrid mode with automatic synchronization",
-      "description": "Enhance the persistence manager to support hybrid mode where tasks are stored in both systems with automatic bidirectional synchronization.",
-      "details": "1. Implement HybridStorageProvider in the persistence manager\n2. Add automatic sync on all task operations (create, update, delete)\n3. Implement conflict detection and resolution strategies\n4. Add sync interval configuration for background synchronization\n5. Implement offline operation with sync queue\n6. Add sync status tracking and reporting\n\nImplementation details:\n```javascript\n// In persistence-manager.js\nclass HybridStorageProvider {\n  constructor(localStorage, mondayClient) {\n    this.localStorage = localStorage;\n    this.mondayClient = mondayClient;\n    this.syncEngine = require('./monday-sync');\n    this.config = require('../config');\n    \n    // Start background sync if configured\n    this._setupBackgroundSync();\n  }\n\n  _setupBackgroundSync() {\n    const syncInterval = this.config.getSyncInterval() || 300; // Default 5 minutes\n    \n    if (syncInterval > 0) {\n      setInterval(() => this.synchronize(), syncInterval * 1000);\n    }\n  }\n\n  async getTasks() {\n    // Get tasks from local storage\n    return this.localStorage.loadTasks();\n  }\n\n  async getTaskById(id) {\n    return this.localStorage.getTaskById(id);\n  }\n\n  async createTask(taskData) {\n    // Create task locally first\n    const task = await this.localStorage.createTask({\n      ...taskData,\n      lastModifiedLocal: new Date().toISOString(),\n      syncStatus: 'pending'\n    });\n    \n    // Then push to Monday\n    try {\n      const result = await this.syncEngine.pushTaskToMonday(task);\n      if (result.success) {\n        await this.localStorage.markTaskAsSynced(task.id, result.mondayItemId);\n      }\n    } catch (error) {\n      console.error(`Error syncing new task ${task.id} to Monday:`, error);\n      // Task is still created locally with pending sync status\n    }\n    \n    return task;\n  }\n\n  async updateTask(id, taskData) {\n    const task = await this.localStorage.getTaskById(id);\n    \n    if (!task) {\n      throw new Error(`Task with ID ${id} not found`);\n    }\n    \n    // Update task locally first\n    const updatedTask = await this.localStorage.updateTask({\n      ...task,\n      ...taskData,\n      lastModifiedLocal: new Date().toISOString(),\n      syncStatus: task.mondayItemId ? 'pending' : 'synced' // Only mark pending if it exists on Monday\n    });\n    \n    // Then push to Monday if it has a Monday item ID\n    if (updatedTask.mondayItemId) {\n      try {\n        const result = await this.syncEngine.pushTaskToMonday(updatedTask);\n        if (result.success) {\n          await this.localStorage.markTaskAsSynced(updatedTask.id, updatedTask.mondayItemId);\n        }\n      } catch (error) {\n        console.error(`Error syncing updated task ${updatedTask.id} to Monday:`, error);\n        // Task is still updated locally with pending sync status\n      }\n    }\n    \n    return updatedTask;\n  }\n\n  async deleteTask(id) {\n    const task = await this.localStorage.getTaskById(id);\n    \n    if (!task) {\n      throw new Error(`Task with ID ${id} not found`);\n    }\n    \n    // If task has a Monday item ID, delete it from Monday first\n    if (task.mondayItemId) {\n      try {\n        await this.mondayClient.deleteItem(\n          this.config.getMondayBoardId(),\n          task.mondayItemId\n        );\n      } catch (error) {\n        console.error(`Error deleting task ${id} from Monday:`, error);\n        // Continue with local deletion anyway\n      }\n    }\n    \n    // Then delete locally\n    return this.localStorage.deleteTask(id);\n  }\n\n  async synchronize() {\n    // Perform bidirectional sync\n    console.log('Performing bidirectional sync...');\n    \n    // First push pending local changes to Monday\n    const pendingTasks = await this.localStorage.getTasksBySyncStatus('pending');\n    for (const task of pendingTasks) {\n      try {\n        const result = await this.syncEngine.pushTaskToMonday(task);\n        if (result.success) {\n          await this.localStorage.markTaskAsSynced(task.id, result.mondayItemId || task.mondayItemId);\n        }\n      } catch (error) {\n        console.error(`Error syncing task ${task.id} to Monday:`, error);\n      }\n    }\n    \n    // Then pull changes from Monday\n    try {\n      await this.syncEngine.pullAllTasksFromMonday({\n        // Use conflict resolution strategy from config\n        resolveConflicts: this.config.getConflictResolution() || 'manual'\n      });\n    } catch (error) {\n      console.error('Error pulling changes from Monday:', error);\n    }\n    \n    return { success: true };\n  }\n}\n```",
-      "testStrategy": "1. Unit test the HybridStorageProvider with mocked dependencies\n2. Test automatic sync on task operations (create, update, delete)\n3. Verify conflict detection and resolution\n4. Test background sync with different intervals\n5. Test offline operation and sync queue\n6. Verify sync status tracking and reporting\n7. Integration test with actual Monday.com API\n8. Test error handling and recovery\n9. Benchmark performance with different sync strategies\n10. Test with the command: `task-master config --set-mode=hybrid`",
-      "priority": "high",
+      "description": "Enhance the persistence manager to support hybrid mode where tasks are stored in both systems with automatic real-time synchronization to Monday.com.",
+      "status": "in-progress",
       "dependencies": [
         125
       ],
-      "status": "pending",
-      "subtasks": [],
-      "syncStatus": "pending"
+      "priority": "high",
+      "details": "1. Implement HybridStorageProvider in the persistence manager as the primary mode\n2. Add automatic real-time sync on all task operations (create, update, delete, status changes)\n3. Implement error handling and reporting for sync operations\n4. Add sync status tracking and reporting\n\nImplementation details:\n```javascript\n// In persistence-manager.js\nclass HybridStorageProvider {\n  constructor(localStorage, mondayClient) {\n    this.localStorage = localStorage;\n    this.mondayClient = mondayClient;\n    this.syncEngine = require('./monday-sync');\n    this.config = require('../config');\n  }\n\n  async getTasks() {\n    // Get tasks from local storage\n    return this.localStorage.loadTasks();\n  }\n\n  async getTaskById(id) {\n    return this.localStorage.getTaskById(id);\n  }\n\n  async createTask(taskData) {\n    // Create task locally first\n    const task = await this.localStorage.createTask({\n      ...taskData,\n      lastModifiedLocal: new Date().toISOString(),\n      syncStatus: 'pending'\n    });\n    \n    // Then push to Monday immediately\n    try {\n      const result = await this.syncEngine.pushTaskToMonday(task);\n      if (result.success) {\n        await this.localStorage.markTaskAsSynced(task.id, result.mondayItemId);\n      }\n    } catch (error) {\n      console.error(`Error syncing new task ${task.id} to Monday:`, error);\n      // Task is still created locally but with sync error status\n      await this.localStorage.updateSyncStatus(task.id, 'error', error.message);\n      throw new Error(`Task created locally but failed to sync to Monday.com: ${error.message}`);\n    }\n    \n    return task;\n  }\n\n  async updateTask(id, taskData) {\n    const task = await this.localStorage.getTaskById(id);\n    \n    if (!task) {\n      throw new Error(`Task with ID ${id} not found`);\n    }\n    \n    // Update task locally first\n    const updatedTask = await this.localStorage.updateTask({\n      ...task,\n      ...taskData,\n      lastModifiedLocal: new Date().toISOString(),\n      syncStatus: 'pending'\n    });\n    \n    // Then push to Monday immediately\n    try {\n      const result = await this.syncEngine.pushTaskToMonday(updatedTask);\n      if (result.success) {\n        await this.localStorage.markTaskAsSynced(updatedTask.id, updatedTask.mondayItemId);\n      }\n    } catch (error) {\n      console.error(`Error syncing updated task ${updatedTask.id} to Monday:`, error);\n      // Update sync status to error\n      await this.localStorage.updateSyncStatus(updatedTask.id, 'error', error.message);\n      throw new Error(`Task updated locally but failed to sync to Monday.com: ${error.message}`);\n    }\n    \n    return updatedTask;\n  }\n\n  async updateTaskStatus(id, status) {\n    // Specialized method for status updates which are common\n    return this.updateTask(id, { status });\n  }\n\n  async deleteTask(id) {\n    const task = await this.localStorage.getTaskById(id);\n    \n    if (!task) {\n      throw new Error(`Task with ID ${id} not found`);\n    }\n    \n    // If task has a Monday item ID, delete it from Monday immediately\n    if (task.mondayItemId) {\n      try {\n        await this.mondayClient.deleteItem(\n          this.config.getMondayBoardId(),\n          task.mondayItemId\n        );\n      } catch (error) {\n        console.error(`Error deleting task ${id} from Monday:`, error);\n        throw new Error(`Failed to delete task from Monday.com: ${error.message}`);\n      }\n    }\n    \n    // Then delete locally\n    return this.localStorage.deleteTask(id);\n  }\n\n  async synchronize() {\n    // Perform sync for any tasks that might be out of sync\n    console.log('Performing sync with Monday.com...');\n    \n    // Push any pending local changes to Monday\n    const pendingTasks = await this.localStorage.getTasksBySyncStatus('pending');\n    for (const task of pendingTasks) {\n      try {\n        const result = await this.syncEngine.pushTaskToMonday(task);\n        if (result.success) {\n          await this.localStorage.markTaskAsSynced(task.id, result.mondayItemId || task.mondayItemId);\n        }\n      } catch (error) {\n        console.error(`Error syncing task ${task.id} to Monday:`, error);\n        await this.localStorage.updateSyncStatus(task.id, 'error', error.message);\n      }\n    }\n    \n    // Pull changes from Monday\n    try {\n      await this.syncEngine.pullAllTasksFromMonday();\n    } catch (error) {\n      console.error('Error pulling changes from Monday:', error);\n      throw new Error(`Failed to sync with Monday.com: ${error.message}`);\n    }\n    \n    return { success: true };\n  }\n}\n```\n\n```javascript\n// In auto-sync-hooks.js\nconst { getPersistenceMode, getHybridAutoSync } = require('../config-manager');\nconst { createSyncEngine } = require('./monday-sync');\nconst logger = require('../logger');\n\n/**\n * Checks if auto-sync is enabled based on current configuration\n * @param {string} projectRoot - Project root path\n * @returns {boolean} - Whether auto-sync is enabled\n */\nfunction isAutoSyncEnabled(projectRoot) {\n  const mode = getPersistenceMode(projectRoot);\n  const autoSync = getHybridAutoSync(projectRoot);\n  return mode === 'hybrid' && autoSync === true;\n}\n\n/**\n * Handles task creation sync to Monday.com\n * @param {Object} task - The newly created task\n * @param {Object} context - Operation context (session, projectRoot)\n */\nasync function onTaskCreated(task, context) {\n  if (!isAutoSyncEnabled(context.projectRoot)) return;\n  \n  try {\n    logger.info(`Auto-syncing new task ${task.id} to Monday.com...`);\n    const syncEngine = createSyncEngine(context.projectRoot);\n    const result = await syncEngine.pushTaskToMonday(task);\n    \n    if (result.success) {\n      logger.info(`✅ Task ${task.id} successfully synced to Monday.com`);\n    }\n  } catch (error) {\n    logger.error(`Failed to sync task ${task.id} to Monday.com: ${error.message}`);\n  }\n}\n\n/**\n * Handles task update sync to Monday.com\n * @param {Object} task - The updated task\n * @param {Object} context - Operation context (session, projectRoot)\n */\nasync function onTaskUpdated(task, context) {\n  if (!isAutoSyncEnabled(context.projectRoot)) return;\n  \n  try {\n    logger.info(`Auto-syncing updated task ${task.id} to Monday.com...`);\n    const syncEngine = createSyncEngine(context.projectRoot);\n    const result = await syncEngine.pushTaskToMonday(task);\n    \n    if (result.success) {\n      logger.info(`✅ Task ${task.id} updates successfully synced to Monday.com`);\n    }\n  } catch (error) {\n    logger.error(`Failed to sync task updates for ${task.id} to Monday.com: ${error.message}`);\n  }\n}\n\n/**\n * Handles task status change sync to Monday.com\n * @param {Object} task - The task with updated status\n * @param {Object} context - Operation context (session, projectRoot)\n */\nasync function onTaskStatusChanged(task, context) {\n  if (!isAutoSyncEnabled(context.projectRoot)) return;\n  \n  try {\n    logger.info(`Auto-syncing status change for task ${task.id} to Monday.com...`);\n    const syncEngine = createSyncEngine(context.projectRoot);\n    const result = await syncEngine.pushTaskToMonday(task);\n    \n    if (result.success) {\n      logger.info(`✅ Task ${task.id} status successfully synced to Monday.com`);\n    }\n  } catch (error) {\n    logger.error(`Failed to sync status change for task ${task.id} to Monday.com: ${error.message}`);\n  }\n}\n\n/**\n * Handles task deletion sync to Monday.com\n * @param {Object} task - The task to be deleted\n * @param {Object} context - Operation context (session, projectRoot)\n */\nasync function onTaskDeleted(task, context) {\n  if (!isAutoSyncEnabled(context.projectRoot)) return;\n  \n  try {\n    logger.info(`Auto-syncing deletion of task ${task.id} to Monday.com...`);\n    const syncEngine = createSyncEngine(context.projectRoot);\n    const result = await syncEngine.deleteTaskFromMonday(task);\n    \n    if (result.success) {\n      logger.info(`✅ Task ${task.id} successfully deleted from Monday.com`);\n    }\n  } catch (error) {\n    logger.error(`Failed to delete task ${task.id} from Monday.com: ${error.message}`);\n  }\n}\n\n/**\n * Handles subtask creation sync to Monday.com\n * @param {Object} subtask - The newly created subtask\n * @param {Object} parentTask - The parent task\n * @param {Object} context - Operation context (session, projectRoot)\n */\nasync function onSubtaskCreated(subtask, parentTask, context) {\n  if (!isAutoSyncEnabled(context.projectRoot)) return;\n  \n  try {\n    logger.info(`Auto-syncing new subtask for task ${parentTask.id} to Monday.com...`);\n    const syncEngine = createSyncEngine(context.projectRoot);\n    const result = await syncEngine.pushSubtaskToMonday(subtask, parentTask);\n    \n    if (result.success) {\n      logger.info(`✅ Subtask ${subtask.id} successfully synced to Monday.com`);\n    }\n  } catch (error) {\n    logger.error(`Failed to sync subtask ${subtask.id} to Monday.com: ${error.message}`);\n  }\n}\n\n/**\n * Handles subtask update sync to Monday.com\n * @param {Object} subtask - The updated subtask\n * @param {Object} parentTask - The parent task\n * @param {Object} context - Operation context (session, projectRoot)\n */\nasync function onSubtaskUpdated(subtask, parentTask, context) {\n  if (!isAutoSyncEnabled(context.projectRoot)) return;\n  \n  try {\n    logger.info(`Auto-syncing updated subtask ${subtask.id} to Monday.com...`);\n    const syncEngine = createSyncEngine(context.projectRoot);\n    const result = await syncEngine.pushSubtaskToMonday(subtask, parentTask);\n    \n    if (result.success) {\n      logger.info(`✅ Subtask ${subtask.id} updates successfully synced to Monday.com`);\n    }\n  } catch (error) {\n    logger.error(`Failed to sync subtask updates for ${subtask.id} to Monday.com: ${error.message}`);\n  }\n}\n\n/**\n * Handles subtask deletion sync to Monday.com\n * @param {Object} subtask - The subtask to be deleted\n * @param {Object} parentTask - The parent task\n * @param {Object} context - Operation context (session, projectRoot)\n */\nasync function onSubtaskDeleted(subtask, parentTask, context) {\n  if (!isAutoSyncEnabled(context.projectRoot)) return;\n  \n  try {\n    logger.info(`Auto-syncing deletion of subtask ${subtask.id} to Monday.com...`);\n    const syncEngine = createSyncEngine(context.projectRoot);\n    const result = await syncEngine.deleteSubtaskFromMonday(subtask, parentTask);\n    \n    if (result.success) {\n      logger.info(`✅ Subtask ${subtask.id} successfully deleted from Monday.com`);\n    }\n  } catch (error) {\n    logger.error(`Failed to delete subtask ${subtask.id} from Monday.com: ${error.message}`);\n  }\n}\n\nmodule.exports = {\n  onTaskCreated,\n  onTaskUpdated,\n  onTaskStatusChanged,\n  onTaskDeleted,\n  onSubtaskCreated,\n  onSubtaskUpdated,\n  onSubtaskDeleted,\n  isAutoSyncEnabled\n};\n```",
+      "testStrategy": "1. Unit test the HybridStorageProvider with mocked dependencies\n2. Test automatic real-time sync on task operations (create, update, delete, status changes)\n3. Verify sync status tracking and reporting\n4. Integration test with actual Monday.com API\n5. Test error handling and user feedback when sync fails\n6. Test with the command: `task-master config --set-mode=hybrid`\n7. Test CLI commands to ensure they trigger immediate sync\n8. Test MCP tools to ensure they trigger immediate sync\n9. Test error reporting in CLI and MCP interfaces\n10. Test sync hooks in all CLI commands that modify tasks\n11. Test sync hooks in all MCP tools that modify tasks\n12. Verify proper error messages are displayed to users when sync fails\n13. Test the isAutoSyncEnabled() function with various configuration settings\n14. Verify auto-sync hooks trigger correctly for all task operations\n15. Test user feedback messages for sync operations\n16. Verify the fix for auto-sync configuration checking",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement HybridStorageProvider class",
+          "description": "Create the HybridStorageProvider class in the persistence manager that handles both local storage and Monday.com integration",
+          "dependencies": [],
+          "details": "1. Create the HybridStorageProvider class in persistence-manager.js\n2. Implement constructor to accept localStorage and mondayClient parameters\n3. Implement basic CRUD methods (getTasks, getTaskById, createTask, updateTask, updateTaskStatus, deleteTask)\n4. Add sync status tracking to each task object (pending, synced, error)\n5. Implement the synchronize() method for manual sync operations",
+          "status": "done",
+          "testStrategy": "Write unit tests for each CRUD operation in the HybridStorageProvider, mocking both localStorage and mondayClient dependencies. Test both successful operations and error handling scenarios."
+        },
+        {
+          "id": 2,
+          "title": "Create auto-sync hooks module",
+          "description": "Implement the auto-sync-hooks.js module with event handlers for task operations",
+          "dependencies": [
+            1
+          ],
+          "details": "1. Create auto-sync-hooks.js module with isAutoSyncEnabled helper function\n2. Implement core event handlers: onTaskCreated, onTaskUpdated, onTaskStatusChanged, onTaskDeleted\n3. Implement subtask event handlers: onSubtaskCreated, onSubtaskUpdated, onSubtaskDeleted\n4. Add proper error handling and logging for all sync operations\n5. Export all event handlers for use in MCP direct functions\n<info added on 2025-06-03T20:31:15.959Z>\nImplementation completed! ✅\n\nThe auto-sync-hooks.js module has been successfully implemented with all required functionality:\n\n- Module created at `scripts/modules/task-manager/auto-sync-hooks.js`\n- Core functionality implemented:\n  - `isAutoSyncEnabled()` helper function checks if auto-sync is enabled based on persistence mode and configuration\n  - `createSyncEngine()` factory function creates MondaySyncEngine instance only when auto-sync is enabled\n  - All required event handlers implemented with proper error handling and logging\n\nKey features:\n- Configurable `throwOnError` parameter for error handling\n- Comprehensive logging for all sync operations\n- Session and MCP log support for both CLI and MCP contexts\n- Graceful degradation when auto-sync is disabled\n- Monday item ID validation before deletion operations\n- Proper sync engine initialization with error recovery\n\nIntegration status:\n- Already integrated into `add-task.js` for task creation\n- Already integrated into `set-task-status.js` for status changes\n- All hooks accept standard options: `{ session, mcpLog, throwOnError }`\n- Returns boolean success indicators for operation status\n</info added on 2025-06-03T20:31:15.959Z>",
+          "status": "done",
+          "testStrategy": "Create unit tests for each hook function, verifying they only trigger sync when auto-sync is enabled and handle errors gracefully."
+        },
+        {
+          "id": 3,
+          "title": "Integrate auto-sync hooks with task operations",
+          "description": "Add auto-sync hooks to all MCP direct functions that modify tasks",
+          "dependencies": [
+            2
+          ],
+          "details": "1. Modify task-create.js to call onTaskCreated after successful task creation\n2. Update task-update.js to call onTaskUpdated after task updates\n3. Modify task-status.js to call onTaskStatusChanged after status changes\n4. Update task-delete.js to call onTaskDeleted before task deletion\n5. Ensure context object (session, projectRoot) is passed to all hook functions\n<info added on 2025-06-03T20:40:15.222Z>\nImplementation completed! ✅\n\n**Auto-sync hooks integration into MCP direct functions has been successfully completed:**\n\n✅ **Core Functions Updated:**\n1. **`update-task-by-id.js`** - Added `onTaskUpdated` hook integration with proper context passing\n2. **`remove-task.js`** - Added `onTaskDeleted` hook integration with proper context passing\n\n✅ **MCP Direct Functions Updated:**\n1. **`remove-task.js`** - Updated to accept and pass context (session, mcpLog, projectRoot) to core function\n2. **`update-task-by-id.js`** - Already properly configured to pass context\n3. **`update-subtask-by-id.js`** - Already has `onSubtaskUpdated` hook integrated\n4. **`add-subtask.js`** - Already has `onSubtaskCreated` hook integrated  \n5. **`remove-subtask.js`** - Already has `onSubtaskDeleted` hook integrated\n\n✅ **CLI Commands Updated:**\n1. **`update-task`** - Updated to pass project root context for auto-sync hooks\n2. **`update-subtask`** - Updated to pass project root context for auto-sync hooks\n3. **`remove-task`** - Updated to pass project root context for auto-sync hooks\n\n✅ **Hook Integration Status:**\n- `onTaskCreated` ✅ (already in `add-task.js`)\n- `onTaskUpdated` ✅ (now in `update-task-by-id.js`)\n- `onTaskStatusChanged` ✅ (already in `set-task-status.js`)\n- `onTaskDeleted` ✅ (now in `remove-task.js`)\n- `onSubtaskCreated` ✅ (already in MCP `add-subtask.js`)\n- `onSubtaskUpdated` ✅ (already in MCP `update-subtask-by-id.js`)\n- `onSubtaskDeleted` ✅ (already in MCP `remove-subtask.js`)\n\n**Architecture Notes:**\n- Auto-sync hooks are integrated at the core function level for task operations\n- MCP direct functions pass proper context (session, mcpLog, projectRoot) to enable sync\n- CLI commands pass project root context for auto-sync functionality\n- Error handling ensures sync failures don't break core operations\n- All hooks include proper error logging and graceful degradation\n</info added on 2025-06-03T20:40:15.222Z>",
+          "status": "done",
+          "testStrategy": "Create integration tests that verify task operations trigger the appropriate sync hooks when in hybrid mode with auto-sync enabled."
+        },
+        {
+          "id": 4,
+          "title": "Integrate auto-sync hooks with subtask operations",
+          "description": "Add auto-sync hooks to all MCP direct functions that modify subtasks",
+          "dependencies": [
+            2
+          ],
+          "details": "1. Modify subtask-create.js to call onSubtaskCreated after successful subtask creation\n2. Update subtask-update.js to call onSubtaskUpdated after subtask updates\n3. Modify subtask-status.js to call onSubtaskStatusChanged after status changes\n4. Update subtask-delete.js to call onSubtaskDeleted before subtask deletion\n5. Ensure both subtask and parent task objects are passed to all hook functions\n<info added on 2025-06-03T20:45:33.512Z>\n✅ **IMPLEMENTATION COMPLETE**\n\nSuccessfully implemented all missing auto-sync hook integrations for subtask operations:\n\n## What was completed:\n\n### 1. Created Missing `onSubtaskStatusChanged` Hook Function\n- Added the missing `onSubtaskStatusChanged` function to `scripts/modules/task-manager/auto-sync-hooks.js`\n- Function follows the same pattern as other subtask hooks (`onSubtaskCreated`, `onSubtaskUpdated`, `onSubtaskDeleted`)\n- Accepts `(projectRoot, parentTask, subtask, oldStatus, options)` parameters as required\n- Handles auto-sync to Monday.com for subtask status changes when in hybrid mode\n\n### 2. Enhanced `set-task-status.js` MCP Direct Function\n- Modified `mcp-server/src/core/direct-functions/set-task-status.js` to detect subtask status changes\n- Added logic to capture old subtask status before update for sync hook\n- Added subtask-specific sync hook integration that calls `onSubtaskStatusChanged` \n- Ensures both subtask and parent task objects are passed to the hook function\n- Includes proper error handling with warning logs for sync failures\n\n## Implementation Details:\n\nThe implementation properly:\n- ✅ Detects when the ID being updated is a subtask (contains a dot)\n- ✅ Captures old status before calling the core setTaskStatus function  \n- ✅ Refreshes task data after status update to get the latest subtask/parent objects\n- ✅ Calls `onSubtaskStatusChanged` with correct parameters: `(projectRoot, parentTask, subtask, oldStatus, options)`\n- ✅ Passes session and mcpLog context for proper sync engine operation\n- ✅ Includes error handling that logs warnings without breaking the status update operation\n\n## Final Status:\n\nAll 5 requirements from task 127.4 are now complete:\n1. ✅ `add-subtask.js` calls `onSubtaskCreated` (was already implemented)\n2. ✅ `update-subtask-by-id.js` calls `onSubtaskUpdated` (was already implemented)  \n3. ✅ `set-task-status.js` calls `onSubtaskStatusChanged` (✨ **NOW IMPLEMENTED**)\n4. ✅ `remove-subtask.js` calls `onSubtaskDeleted` (was already implemented)\n5. ✅ All hook functions receive both subtask and parent task objects (✨ **NOW VERIFIED**)\n\nThe hybrid mode automatic synchronization system now fully supports all subtask operations through the MCP interface!\n</info added on 2025-06-03T20:45:33.512Z>",
+          "status": "done",
+          "testStrategy": "Create integration tests that verify subtask operations trigger the appropriate sync hooks when in hybrid mode with auto-sync enabled."
+        },
+        {
+          "id": 5,
+          "title": "Implement sync status tracking and error handling",
+          "description": "Add comprehensive sync status tracking and error handling for all sync operations",
+          "dependencies": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "details": "1. Enhance localStorage to support sync status fields (syncStatus, lastSyncAttempt, syncError)\n2. Implement markTaskAsSynced and updateSyncStatus methods in localStorage\n3. Create a sync status dashboard component to display sync status for all tasks\n4. Implement retry mechanism for failed sync operations\n5. Add notification system for sync errors that require user attention",
+          "status": "pending",
+          "testStrategy": "Test error scenarios by mocking Monday.com API failures and verifying the system properly tracks sync status, displays errors, and allows for retry operations."
+        },
+        {
+          "id": 6,
+          "title": "Add auto-sync to update-task.js CLI command",
+          "description": "Integrate onTaskUpdated sync hook into the update-task.js CLI command to automatically sync task updates to Monday.com",
+          "details": "Add import for onTaskUpdated from auto-sync-hooks.js and call it after successful task update with proper context (projectRoot, session). Add user feedback showing sync status in CLI output.",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 7,
+          "title": "Add auto-sync to remove-task.js CLI command",
+          "description": "Integrate onTaskDeleted sync hook into the remove-task.js CLI command to automatically remove tasks from Monday.com",
+          "details": "Add import for onTaskDeleted from auto-sync-hooks.js and call it before task deletion with the task object and context. Ensure task data is captured before deletion for sync purposes.\n<info added on 2025-06-03T20:51:00.383Z>\nThe auto-sync integration for the remove-task.js CLI command has been verified as already fully implemented. The existing implementation includes:\n\n1. The `onTaskDeleted` hook is properly imported from `auto-sync-hooks.js` (line 7)\n2. The CLI command correctly passes `projectRoot` context to the core function (lines 2292-2294)\n3. The core function calls `onTaskDeleted` before both task and subtask deletion with proper error handling\n4. Task/subtask objects are captured before deletion for sync purposes\n5. Sync errors are logged as warnings without breaking the removal operation\n\nCode verification confirms all requirements have been met:\n- CLI Command in commands.js:2292-2294 passes the required context\n- Core Function in remove-task.js:75-82, 107-114 calls the hook with proper error handling\n- Auto-sync Hook in auto-sync-hooks.js handles deletion sync to Monday.com when hybrid mode is enabled\n\nNo additional implementation work is required for this subtask.\n</info added on 2025-06-03T20:51:00.383Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 8,
+          "title": "Add auto-sync to add-subtask.js CLI command",
+          "description": "Integrate onSubtaskCreated sync hook into the add-subtask.js CLI command to automatically sync new subtasks to Monday.com",
+          "details": "Add import for onSubtaskCreated from auto-sync-hooks.js and call it after successful subtask creation with the subtask object, parent task, and context. Include sync status feedback in CLI output.\n<info added on 2025-06-03T20:52:17.595Z>\nImplementation completed successfully! Auto-sync integration for add-subtask CLI command has been fully implemented with the following changes:\n\n1. Added import statement: `import { onSubtaskCreated } from './task-manager/auto-sync-hooks.js';`\n\n2. Integrated auto-sync in both task conversion and new subtask creation scenarios.\n\n3. Core implementation features include:\n   - Project root detection using `findProjectRoot() || process.cwd()`\n   - Parent task lookup from tasks.json\n   - Hook invocation with `onSubtaskCreated(projectRoot, parentTask, subtask, { throwOnError: false })`\n   - Graceful error handling with warning messages\n   - Clear visual feedback for sync status\n\n4. User experience enhancements:\n   - Success message: \"📤 Subtask automatically synced to Monday.com\" (cyan)\n   - Failure message: \"⚠️ Subtask created locally, but sync to Monday.com failed\" (yellow)\n   - Debug logging for error details\n\nThe implementation maintains backward compatibility, works with hybrid persistence mode, and provides consistent user experience with other CLI commands.\n</info added on 2025-06-03T20:52:17.595Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 9,
+          "title": "Add auto-sync to update-subtask.js CLI command",
+          "description": "Integrate onSubtaskUpdated sync hook into the update-subtask.js CLI command to automatically sync subtask updates to Monday.com",
+          "details": "Add import for onSubtaskUpdated from auto-sync-hooks.js and call it after successful subtask update with the subtask object, parent task, and context. Provide user feedback for sync status.\n<info added on 2025-06-03T20:52:57.014Z>\n✅ **IMPLEMENTATION COMPLETE**\n\nSuccessfully added auto-sync integration to the update-subtask.js CLI command:\n\n## Implementation Details:\n\n1. **Import Added**: Added `import { onSubtaskUpdated } from './auto-sync-hooks.js';` to the core function\n2. **Hook Integration**: Added call to `onSubtaskUpdated` after successful subtask update with proper context\n3. **Context Passing**: CLI command already passes `projectRoot` via `findProjectRoot(path.dirname(tasksPath))`\n4. **Error Handling**: Sync errors are logged as warnings without breaking the subtask update operation\n5. **User Feedback**: The existing function already provides comprehensive user feedback\n\n## Integration Code:\n```javascript\n// Call auto-sync hook for subtask update\nif (projectRoot) {\n    try {\n        await onSubtaskUpdated(projectRoot, parentTask, updatedSubtask, {\n            session,\n            mcpLog,\n            throwOnError: false // Don't throw errors, just log them\n        });\n    } catch (syncError) {\n        report('warn', `Auto-sync failed for subtask ${subtaskId} update: ${syncError.message}`);\n    }\n}\n```\n\n## Auto-sync Hook Function Signature:\n- `onSubtaskUpdated(projectRoot, parentTask, subtask, options)`\n- Options include: `{ session, mcpLog, throwOnError: false }`\n\n## Result:\nThe CLI command `task-master update-subtask --id=<id> --prompt=\"...\"` now automatically syncs subtask updates to Monday.com when hybrid mode is enabled, providing seamless integration with the auto-sync system.\n</info added on 2025-06-03T20:52:57.014Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 10,
+          "title": "Add auto-sync to remove-subtask.js CLI command",
+          "description": "Integrate onSubtaskDeleted sync hook into the remove-subtask.js CLI command to automatically remove subtasks from Monday.com",
+          "details": "Add import for onSubtaskDeleted from auto-sync-hooks.js and call it before subtask deletion with the subtask object, parent task, and context. Capture subtask data before deletion for sync purposes.\n<info added on 2025-06-03T20:57:52.448Z>\nAdded import for onSubtaskDeleted from auto-sync-hooks.js and integrated it into the remove-subtask.js CLI command. The implementation calls onSubtaskDeleted before subtask deletion, passing the subtask object, parent task, and context with session, mcpLog, and projectRoot. Added proper error handling for sync failures with warning logs that don't interrupt the removal operation. Modified the CLI command in commands.js to determine project root and pass the context object to removeSubtask. The sync hook uses throwOnError: false for graceful degradation, ensuring that sync failures are logged as warnings without breaking the removal operation. Auto-sync only activates when hybrid mode is enabled in configuration.\n</info added on 2025-06-03T20:57:52.448Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 11,
+          "title": "Add auto-sync to move-task.js CLI command",
+          "description": "Integrate onTaskUpdated sync hook into the move-task.js CLI command to automatically sync task moves to Monday.com",
+          "details": "Add import for onTaskUpdated from auto-sync-hooks.js and call it after successful task move operation with the moved task object and context. Handle both task and subtask move scenarios.\n<info added on 2025-06-03T21:00:45.850Z>\nImplementation completed for auto-sync in move-task CLI command. Added import for onTaskUpdated from auto-sync-hooks.js (line 82) and implemented sync calls after successful operations. For single task moves (lines 3130-3150), added onTaskUpdated call with proper error handling and user feedback. For multiple task moves (lines 3095-3115), implemented individual sync calls for each moved task with appropriate feedback. Added project root detection using findProjectRoot() with fallback to path.dirname(tasksPath). The implementation handles all move scenarios (task-to-task, task-to-subtask, subtask moves) and provides clear user feedback about sync status.\n</info added on 2025-06-03T21:00:45.850Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 12,
+          "title": "Add auto-sync to expand-task.js CLI command",
+          "description": "Integrate onSubtaskCreated sync hook into the expand-task.js CLI command to automatically sync newly generated subtasks to Monday.com",
+          "details": "Add import for onSubtaskCreated from auto-sync-hooks.js and call it for each newly created subtask during task expansion with the subtask object, parent task, and context. Provide bulk sync feedback.\n<info added on 2025-06-03T21:03:43.468Z>\nImplementation completed successfully! ✅\n\n**Auto-sync Integration for expand-task CLI Command Complete:**\n\n## Implementation Details:\n\n### 1. Import Integration\n- Auto-sync hook `onSubtaskCreated` is already imported from `auto-sync-hooks.js` on line 86 of commands.js\n\n### 2. Single Task Expansion (`task-master expand --id=<id>`)\n- Modified CLI command to pass `projectRoot` in context for sync hooks\n- Added logic to read task before expansion to determine existing subtask count  \n- Captures result from `expandTask` function which returns `{ task, telemetryData }`\n- Determines which subtasks are newly created:\n  - If `--force` flag: all subtasks are considered new\n  - Otherwise: only subtasks added after existing count are new\n- Calls `onSubtaskCreated` hook for each new subtask with proper context\n- Provides user feedback with sync statistics\n\n### 3. Multiple Task Expansion (`task-master expand --all`)\n- Modified CLI command to track tasks before expansion\n- Creates map of task IDs to existing subtask counts before expansion\n- After expansion, compares current subtasks with previous counts\n- Syncs only the truly new subtasks from each expanded task\n- Provides bulk sync feedback with total counts\n\n### 4. User Feedback Features\n- Success message: \"📤 X subtask(s) automatically synced to Monday.com\" (cyan)\n- Failure message: \"⚠️ X subtask(s) created locally, but sync to Monday.com failed\" (yellow)\n- Debug logging for individual sync errors\n- Graceful error handling that doesn't break expansion if sync fails\n\n### 5. Integration Code Example:\n```javascript\n// Auto-sync integration for newly created subtasks\nif (result && result.task && result.task.subtasks && result.task.subtasks.length > 0) {\n    try {\n        console.log(chalk.blue('Auto-syncing newly created subtasks to Monday.com...'));\n        \n        // Determine which subtasks are new\n        let newSubtasks;\n        if (options.force) {\n            newSubtasks = result.task.subtasks;\n        } else {\n            newSubtasks = result.task.subtasks.slice(existingSubtaskCount);\n        }\n\n        let syncedCount = 0;\n        let failedCount = 0;\n\n        for (const subtask of newSubtasks) {\n            try {\n                await onSubtaskCreated(projectRoot, result.task, subtask, {\n                    throwOnError: false\n                });\n                syncedCount++;\n            } catch (syncError) {\n                failedCount++;\n                log('debug', `Auto-sync error for subtask ${result.task.id}.${subtask.id}: ${syncError.message}`);\n            }\n        }\n\n        // Provide user feedback for bulk sync\n        if (syncedCount > 0) {\n            console.log(chalk.cyan(`📤 ${syncedCount} subtask(s) automatically synced to Monday.com`));\n        }\n        if (failedCount > 0) {\n            console.log(chalk.yellow(`⚠️ ${failedCount} subtask(s) created locally, but sync to Monday.com failed`));\n        }\n\n    } catch (syncError) {\n        console.log(chalk.yellow('⚠️ Subtasks created locally, but sync to Monday.com failed'));\n        log('debug', `Auto-sync error: ${syncError.message}`);\n    }\n}\n```\n\n## Integration Points:\n- **Hook Function**: `onSubtaskCreated(projectRoot, parentTask, subtask, options)`\n- **Context Parameters**: `{ throwOnError: false }` for graceful error handling\n- **Auto-sync Trigger**: Only when hybrid persistence mode is enabled\n- **Return Values**: Boolean success indicators logged for tracking\n\n## Result:\nThe CLI commands `task-master expand --id=<id>` and `task-master expand --all` now automatically sync newly generated subtasks to Monday.com when hybrid mode is enabled, providing seamless integration with the auto-sync system and comprehensive user feedback for bulk operations.\n</info added on 2025-06-03T21:03:43.468Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 13,
+          "title": "Add auto-sync to update-task.js MCP direct function",
+          "description": "Integrate onTaskUpdated sync hook into the update-task.js MCP direct function to automatically sync task updates to Monday.com",
+          "details": "Update mcp-server/src/core/direct-functions/update-task.js to import onTaskUpdated from auto-sync-hooks.js and call it after successful task update with proper context (session, projectRoot). Ensure the hook is called in the direct function layer.\n<info added on 2025-06-03T21:02:38.029Z>\nThe auto-sync integration for update-task.js is already fully implemented. The implementation exists in:\n\n1. Core function (`scripts/modules/task-manager/update-task-by-id.js`):\n   - Imports `onTaskUpdated` from auto-sync-hooks.js (line 29)\n   - Calls the hook after successful task updates (lines 492-508)\n   - Includes proper error handling\n   - Passes full context including session, mcpLog, and projectRoot\n\n2. MCP direct function (`mcp-server/src/core/direct-functions/update-task-by-id.js`):\n   - Calls the core function with all required context (lines 94-102)\n   - Passes context including mcpLog, session, projectRoot, commandName, and outputType\n\nThe auto-sync hook properly checks for hybrid mode, handles errors gracefully with throwOnError: false, provides user feedback on sync status, and logs warnings for failures without disrupting the main task update functionality.\n\nNo additional implementation work is required as the functionality is already complete and working correctly with the hybrid persistence mode.\n</info added on 2025-06-03T21:02:38.029Z>\n<info added on 2025-06-03T21:03:00.906Z>\nThe auto-sync integration for update-task.js is already fully implemented. The implementation exists in:\n\n1. Core function (`scripts/modules/task-manager/update-task-by-id.js`):\n   - Imports `onTaskUpdated` from auto-sync-hooks.js (line 29)\n   - Calls the hook after successful task updates (lines 492-508)\n   - Includes proper error handling\n   - Passes full context including session, mcpLog, and projectRoot\n\n2. MCP direct function (`mcp-server/src/core/direct-functions/update-task-by-id.js`):\n   - Calls the core function with all required context (lines 94-102)\n   - Passes context including mcpLog, session, projectRoot, commandName, and outputType\n\nThe auto-sync hook properly checks for hybrid mode, handles errors gracefully with throwOnError: false, provides user feedback on sync status, and logs warnings for failures without disrupting the main task update functionality.\n\nNo additional implementation work is required as the functionality is already complete and working correctly with the hybrid persistence mode.\n</info added on 2025-06-03T21:03:00.906Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 14,
+          "title": "Add auto-sync to add-task.js MCP direct function",
+          "description": "Integrate onTaskCreated sync hook into the add-task.js MCP direct function to automatically sync new tasks to Monday.com",
+          "details": "Update mcp-server/src/core/direct-functions/add-task.js to import onTaskCreated from auto-sync-hooks.js and call it after successful task creation with proper context (session, projectRoot). Ensure the hook is called in the direct function layer.\n<info added on 2025-06-03T21:04:51.622Z>\nAfter investigation, the auto-sync functionality is already implemented in the core addTask function (scripts/modules/task-manager/add-task.js) at lines 1043-1060. The implementation correctly imports onTaskCreated and calls it after successful task creation with the proper context (session, mcpLog, projectRoot). The function also returns syncSuccess and syncError in the result object.\n\nFor the direct function layer (mcp-server/src/core/direct-functions/add-task.js), we need to ensure:\n1. The direct function properly passes through the sync results from the core implementation\n2. Any sync-specific error handling is maintained at this layer\n3. The MCP response includes the sync status information\n\nThis subtask should focus on verifying these aspects in the direct function implementation and making any necessary adjustments to ensure the auto-sync is properly integrated at the MCP direct function layer as specified.\n</info added on 2025-06-03T21:04:51.622Z>\n<info added on 2025-06-03T21:06:04.017Z>\nImplementation complete: Successfully updated the add-task.js MCP direct function to properly integrate auto-sync functionality.\n\nChanges made:\n1. Added syncSuccess and syncError variables to capture sync results from addTask function\n2. Updated both manual and AI-driven task creation branches to extract sync results\n3. Added debug logging for sync status in the direct function layer\n4. Enhanced return data to include syncStatus object with success and error fields\n\nThe auto-sync integration is now properly implemented in the direct function layer as requested. The function:\n- Calls the core addTask function which already has onTaskCreated hook integration\n- Captures sync results (success/error) from the core layer\n- Logs sync status for debugging purposes  \n- Returns sync status information to MCP clients\n\nTesting shows the changes are applied correctly. The auto-sync functionality works end-to-end from MCP direct function → core addTask → onTaskCreated hook.\n</info added on 2025-06-03T21:06:04.017Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 15,
+          "title": "Add auto-sync to remaining MCP direct functions",
+          "description": "Integrate appropriate sync hooks into all remaining MCP direct functions that modify tasks or subtasks",
+          "details": "Update the following MCP direct functions with appropriate sync hooks:\\n- remove-task.js → onTaskDeleted\\n- add-subtask.js → onSubtaskCreated\\n- update-subtask.js → onSubtaskUpdated\\n- remove-subtask.js → onSubtaskDeleted\\n- move-task.js → onTaskUpdated\\n- expand-task.js → onSubtaskCreated (for generated subtasks)\\nEnsure all hooks receive proper context (session, projectRoot) and are called at the appropriate time in the operation lifecycle.\n<info added on 2025-06-03T21:09:51.296Z>\n✅ **IMPLEMENTATION COMPLETE**\n\nSuccessfully implemented auto-sync integration for all remaining MCP direct functions that modify tasks or subtasks.\n\n## Final Integration Status:\n\n### ✅ **MCP Direct Functions with Auto-Sync Integration:**\n\n1. **`remove-task.js`** → `onTaskDeleted` ✅\n   - Already passes proper context (`{ session, mcpLog: log, projectRoot }`) to core function\n   - Core function already has `onTaskDeleted` hook integration (lines 89, 120 in core remove-task.js)\n   - Handles both task and subtask deletion with appropriate sync hooks\n\n2. **`add-task.js`** → `onTaskCreated` ✅ \n   - Core function already has auto-sync integration with `onTaskCreated` hook (line 1048 in core add-task.js)\n   - MCP direct function enhanced to capture and return sync status results\n   - Completed in subtask 127.14\n\n3. **`add-subtask.js`** → `onSubtaskCreated` ✅\n   - Already has `onSubtaskCreated` hook import and integration (lines 5, 130, 179)\n   - Calls auto-sync hook after both task conversion and new subtask creation\n   - Includes proper error handling with warning logs\n\n4. **`update-subtask-by-id.js`** → `onSubtaskUpdated` ✅  \n   - Already has `onSubtaskUpdated` hook import and integration (lines 6, 139)\n   - Calls hook after successful subtask updates with proper context\n   - Includes comprehensive error handling\n\n5. **`remove-subtask.js`** → `onSubtaskDeleted` ✅\n   - Already has `onSubtaskDeleted` hook import and integration (lines 5, 116)\n   - Captures subtask data before deletion for sync purposes\n   - Only syncs deletion when not converting to standalone task\n\n6. **`move-task.js`** → `onTaskUpdated` ✅ (**NEW IMPLEMENTATION**)\n   - Added import for `onTaskUpdated` and `readJSON` utilities\n   - Integrated auto-sync hook after successful task move operations\n   - Handles complex logic for both task and subtask moves\n   - Includes proper error handling with warning logs\n\n7. **`expand-task.js`** → `onSubtaskCreated` ✅ (**NEW IMPLEMENTATION**)\n   - Added import for `onSubtaskCreated` hook \n   - Integrated auto-sync for newly created subtasks after successful expansion\n   - Determines which subtasks are new (force vs. append scenarios)\n   - Syncs each new subtask individually with comprehensive logging\n   - Provides detailed feedback on sync success/failure counts\n\n8. **`expand-all-tasks.js`** → Auto-sync via `expandTask` calls ✅\n   - Properly calls individual `expandTask` function for each task\n   - Since `expandTask` has auto-sync integration, all generated subtasks are automatically synced\n   - No additional integration needed at this level\n\n## Architecture Notes:\n\n- **Context Passing**: All MCP direct functions properly pass context (`{ session, mcpLog, projectRoot }`) to enable auto-sync functionality\n- **Error Handling**: Auto-sync failures are logged as warnings without breaking core operations  \n- **Sync Conditions**: Auto-sync only activates when hybrid persistence mode is enabled\n- **Integration Levels**: Some hooks are integrated at the core function level, others at the MCP direct function level, ensuring comprehensive coverage\n- **User Feedback**: Appropriate logging and feedback provided for sync operations across all functions\n\n## Result:\nAll MCP direct functions that modify tasks or subtasks now have proper auto-sync integration. The hybrid mode automatic synchronization system is fully operational across the entire MCP interface, providing seamless Monday.com integration for all task management operations.\n</info added on 2025-06-03T21:09:51.296Z>",
+          "status": "done",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        },
+        {
+          "id": 16,
+          "title": "Create comprehensive testing suite for auto-sync",
+          "description": "Develop comprehensive tests to verify auto-sync functionality works correctly across all CLI commands and MCP tools",
+          "details": "Create test suites that:\\n1. Test all CLI commands with auto-sync enabled/disabled\\n2. Test all MCP tools with auto-sync enabled/disabled\\n3. Test error scenarios (Monday.com unavailable, API token missing)\\n4. Test configuration edge cases (hybrid mode without auto-sync, etc.)\\n5. Integration tests with actual Monday.com API\\n6. Performance tests for bulk operations\\n7. User feedback and error message validation\\n8. Cross-platform compatibility tests",
+          "status": "pending",
+          "dependencies": [],
+          "parentTaskId": 127,
+          "mondayItemId": null,
+          "lastSyncedAt": null,
+          "syncStatus": "pending",
+          "syncError": null
+        }
+      ],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
     },
     {
       "id": 128,
@@ -6670,6 +6888,269 @@
       "mondayItemId": null,
       "lastSyncedAt": null,
       "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 136,
+      "title": "Create Test Task for AI Verification",
+      "description": "Implement a simple test task to verify that the AI integration is working correctly and responding as expected to task creation requests.",
+      "details": "1. Create a basic test task that exercises the AI task generation functionality:\n   - Implement a simple command like `task-master test-ai` that triggers the AI integration\n   - The command should send a predefined prompt to the AI system\n   - The response should be validated for structure and content correctness\n\n2. Set up validation checks:\n   - Verify that the AI returns properly formatted JSON matching our task schema\n   - Check that all required fields (title, description, details, testStrategy) are present\n   - Validate that dependencies are correctly referenced when specified\n   - Ensure the AI respects character limits and formatting requirements\n\n3. Implement error handling:\n   - Add timeout handling for AI responses\n   - Create fallback behavior if the AI service is unavailable\n   - Log detailed information about any failures for debugging\n\n4. Add configuration options:\n   - Allow customization of the test prompt\n   - Provide verbose output option to show full AI interaction\n   - Include option to save test results to a file\n\n5. Document the test functionality:\n   - Add help text explaining the purpose and usage\n   - Include examples of expected output\n   - Document troubleshooting steps for common issues",
+      "testStrategy": "1. Execute the test command without parameters:\n   ```\n   task-master test-ai\n   ```\n   Verify that it successfully contacts the AI service and returns a properly formatted task.\n\n2. Check error handling by simulating API failures:\n   - Temporarily disable network connectivity\n   - Set an invalid API key\n   - Configure an unreasonably short timeout\n   Confirm that appropriate error messages are displayed in each case.\n\n3. Validate the structure of the returned task:\n   - All required fields are present\n   - JSON is well-formed\n   - Dependencies (if any) reference valid task IDs\n\n4. Test with custom parameters:\n   ```\n   task-master test-ai --prompt \"Create a task for email notification system\"\n   task-master test-ai --verbose\n   task-master test-ai --output test-results.json\n   ```\n   Verify that each option works as expected.\n\n5. Review the help documentation:\n   ```\n   task-master test-ai --help\n   ```\n   Confirm that usage instructions are clear and complete.",
+      "status": "pending",
+      "dependencies": [
+        2,
+        5
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 137,
+      "title": "Verify AI Task Generation System",
+      "description": "Create and execute a comprehensive test plan to verify that the AI task generation system is working correctly and producing high-quality task specifications.",
+      "details": "1. Review the existing AI integration implementation:\n   - Examine how tasks are currently generated using the Anthropic Claude API\n   - Understand the prompt structure and response parsing logic\n   - Identify potential failure points or edge cases\n\n2. Design a test suite with various test cases:\n   - Simple task creation with minimal context\n   - Complex task creation with dependencies and detailed requirements\n   - Edge cases (very long descriptions, special characters, etc.)\n   - Error handling scenarios (API failures, malformed responses)\n\n3. Implement a test harness:\n```javascript\n// In test/ai-verification.js\nconst { generateTaskWithAI } = require('../modules/ai-integration');\nconst assert = require('assert');\n\nasync function testAITaskGeneration() {\n  console.log('Testing AI task generation system...');\n  \n  // Test case 1: Simple task creation\n  const simpleResult = await generateTaskWithAI('Create a simple logging function');\n  assert(simpleResult.title, 'Task should have a title');\n  assert(simpleResult.description, 'Task should have a description');\n  assert(simpleResult.details, 'Task should have implementation details');\n  \n  // Test case 2: Complex task with dependencies\n  const complexResult = await generateTaskWithAI(\n    'Implement user authentication system with OAuth integration',\n    { suggestedDependencies: [12, 15, 22] }\n  );\n  assert(complexResult.dependencies && complexResult.dependencies.length > 0, \n    'Complex task should include dependencies');\n  \n  // Additional test cases...\n}\n```\n\n4. Create a dedicated command for running the verification:\n```javascript\n// In commands.js\nprogram\n  .command('verify-ai')\n  .description('Run tests to verify AI task generation is working correctly')\n  .action(async () => {\n    try {\n      const testResults = await require('./test/ai-verification').runTests();\n      console.log(chalk.green('✓ AI verification tests passed!'));\n      console.log(testResults.summary);\n    } catch (error) {\n      console.error(chalk.red('✗ AI verification tests failed:'), error);\n      process.exit(1);\n    }\n  });\n```\n\n5. Implement result validation:\n   - Check that generated tasks conform to the expected schema\n   - Verify that dependencies are correctly identified\n   - Ensure descriptions and details are coherent and relevant\n   - Validate that the AI is following instructions correctly\n\n6. Create a reporting mechanism to display test results and any issues found",
+      "testStrategy": "1. Run the verification command:\n```bash\nnode task-master.js verify-ai\n```\n\n2. Verify that all test cases pass successfully:\n   - Check console output for test results\n   - Ensure no assertions fail during the test run\n   - Confirm that the summary report shows all tests passing\n\n3. Manually review a sample of generated tasks:\n   - Examine the structure of generated tasks\n   - Verify that titles are clear and concise\n   - Ensure descriptions accurately summarize the task\n   - Check that implementation details are comprehensive and relevant\n   - Validate that dependencies make logical sense\n\n4. Test error handling:\n   - Temporarily modify the AI integration to simulate API failures\n   - Verify that the system handles errors gracefully\n   - Ensure appropriate error messages are displayed\n\n5. Perform regression testing:\n   - Generate several tasks using the AI\n   - Compare the quality and structure to previously generated tasks\n   - Ensure no degradation in task quality or format\n\n6. Document any issues found and create follow-up tasks for improvements",
+      "status": "pending",
+      "dependencies": [
+        5,
+        136
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 138,
+      "title": "Verify AI Task Generation System Integration",
+      "description": "Execute a series of tests to verify that the AI task generation system is properly integrated and producing correctly formatted task specifications.",
+      "details": "1. Create a test script that exercises the AI task generation functionality:\n   - Implement a test harness that sends various prompts to the AI system\n   - Include edge cases such as minimal context, complex dependencies, and unusual requirements\n   - Test both successful and error scenarios\n\n2. Verify the AI response parsing and validation:\n   - Ensure the AI responses are correctly parsed into the task data structure\n   - Validate that all required fields (title, description, details, testStrategy) are present\n   - Check that dependencies are correctly identified and formatted as numbers\n\n3. Test the integration with the CLI:\n   - Verify that the AI-generated tasks can be properly added to the tasks.json file\n   - Test that task IDs are correctly assigned and don't conflict with existing tasks\n   - Ensure proper error handling when AI responses are malformed\n\n4. Document the test results:\n   - Create a report of all test cases and their outcomes\n   - Document any issues found and their severity\n   - Provide recommendations for improvements if needed\n\n5. Implement automated tests:\n   - Create unit tests for the AI integration components\n   - Set up integration tests that can be run regularly to ensure continued functionality\n   - Add these tests to the project's test suite",
+      "testStrategy": "1. Execute the test script with various prompts:\n   - Simple task creation: \"Create a task to add a new command\"\n   - Complex task with dependencies: \"Create a task that depends on the Monday.com sync functionality\"\n   - Edge case: Very long or minimal descriptions\n\n2. Verify the structure of AI-generated tasks:\n   - Check that all required fields are present and properly formatted\n   - Validate that dependencies are correctly represented as an array of numbers\n   - Ensure the JSON structure matches the expected schema\n\n3. Test the end-to-end process:\n   - Use the CLI to generate a new task using the AI\n   - Verify the task is correctly added to tasks.json\n   - Check that the task can be viewed, edited, and managed like any other task\n\n4. Perform error testing:\n   - Simulate API failures and verify graceful error handling\n   - Test with malformed prompts to ensure robust processing\n   - Verify timeout handling for slow AI responses\n\n5. Document test results:\n   - Create a test report with all test cases and their outcomes\n   - Include screenshots or logs of successful AI task generation\n   - Document any issues found and steps to reproduce them",
+      "status": "pending",
+      "dependencies": [
+        5,
+        136,
+        137
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 139,
+      "title": "Execute AI Verification Test Suite",
+      "description": "Run a comprehensive test suite to verify that the AI task generation system is functioning correctly and producing properly formatted task specifications.",
+      "details": "1. Create a structured test suite with the following components:\n   - Basic functionality tests: Verify the AI can generate simple tasks with minimal context\n   - Complex scenario tests: Test task generation with dependencies, detailed requirements, and edge cases\n   - Error handling tests: Validate how the system handles malformed requests or API failures\n   - Performance tests: Measure response times and system behavior under load\n\n2. Implement the test execution framework:\n   - Create a dedicated test script in `scripts/tests/ai-verification.js`\n   - Design the script to run each test case sequentially and log results\n   - Include proper error handling and reporting mechanisms\n   - Add command-line options for selecting specific test cases or test categories\n\n3. Define specific test cases:\n   - Test Case 1: Generate a simple task with minimal context\n   - Test Case 2: Generate a complex task with multiple dependencies\n   - Test Case 3: Generate a task with specific technical requirements\n   - Test Case 4: Test response to ambiguous or incomplete task descriptions\n   - Test Case 5: Verify proper handling of API rate limiting or failures\n\n4. Implement validation logic:\n   - Verify JSON structure conforms to the task schema\n   - Check that all required fields are present and properly formatted\n   - Validate that dependencies are correctly identified and referenced\n   - Ensure the AI-generated content is relevant and high-quality\n\n5. Create a reporting mechanism:\n   - Generate a detailed test report showing pass/fail status for each test case\n   - Include timing information and any performance metrics\n   - Highlight any issues or anomalies detected during testing\n   - Provide recommendations for system improvements if applicable",
+      "testStrategy": "1. Automated Verification:\n   - Execute the test suite with the command: `node scripts/tests/ai-verification.js --all`\n   - Verify that all test cases pass without errors\n   - Check the generated test report for any warnings or performance issues\n   - Validate that the AI responses meet the expected format and quality standards\n\n2. Manual Verification:\n   - Review a sample of the AI-generated tasks to assess quality and relevance\n   - Compare AI-generated tasks with human-created tasks for quality benchmarking\n   - Verify that edge cases are handled gracefully (e.g., unusual requests, API failures)\n   - Test the system with intentionally problematic inputs to assess error handling\n\n3. Integration Testing:\n   - Verify that AI-generated tasks can be properly saved to the tasks.json file\n   - Confirm that the generated tasks can be manipulated by other system commands\n   - Test that AI-generated tasks with dependencies correctly reference existing tasks\n   - Ensure the system maintains consistency when working with AI-generated content\n\n4. Performance Assessment:\n   - Measure and document response times for different types of task generation requests\n   - Verify the system remains responsive during AI operations\n   - Test concurrent AI requests to ensure proper handling of multiple operations",
+      "status": "pending",
+      "dependencies": [
+        5,
+        136,
+        137,
+        138
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 140,
+      "title": "Final Verification of Monday.com Auto-Sync Functionality",
+      "description": "Conduct a final comprehensive test to verify that the Monday.com auto-synchronization system is working correctly in the production environment with real data and under normal operating conditions.",
+      "details": "1. Prepare the test environment:\n   - Ensure the production environment is properly configured with Monday.com API credentials\n   - Verify that all sync components are deployed and running\n   - Create a test plan that covers all sync scenarios (create, update, delete operations)\n\n2. Execute automated sync verification tests:\n   - Run the full sync cycle multiple times to ensure consistency\n   - Test bidirectional synchronization (local → Monday and Monday → local)\n   - Verify handling of concurrent modifications\n   - Test auto-sync triggers (time-based, event-based)\n   - Simulate network interruptions to verify recovery mechanisms\n\n3. Perform manual verification tests:\n   - Create new tasks in the local system and verify they appear in Monday.com\n   - Update task status, priority, and other fields locally and verify changes propagate to Monday.com\n   - Create and modify tasks in Monday.com and verify they sync correctly to the local system\n   - Delete tasks in both systems and verify proper deletion handling\n\n4. Verify edge cases:\n   - Large task batches (50+ tasks at once)\n   - Tasks with special characters or extremely long descriptions\n   - Tasks with complex dependency relationships\n   - Tasks with attachments or custom fields\n\n5. Monitor system performance:\n   - Track sync operation timing\n   - Monitor API rate limits and usage\n   - Check for memory leaks during extended sync operations\n   - Verify system stability after multiple sync cycles\n\n6. Document findings:\n   - Create a detailed report of test results\n   - Document any issues found and their resolutions\n   - Update system documentation with any relevant information",
+      "testStrategy": "1. Automated Testing:\n   - Execute the automated test suite that covers all sync operations\n   - Verify logs for successful API calls and data transformations\n   - Check for any errors or warnings in the system logs\n   - Validate that the sync status reporting shows successful completion\n\n2. Manual Testing Scenarios:\n   - Create 5-10 new tasks in the local system with varying complexity\n   - Verify each task appears correctly in Monday.com with all fields properly mapped\n   - Modify tasks in Monday.com (change status, priority, description, etc.)\n   - Verify changes are reflected in the local system after sync\n   - Delete tasks from both systems and verify proper handling\n\n3. Performance Validation:\n   - Measure sync operation time for different data volumes\n   - Verify system remains responsive during sync operations\n   - Monitor memory usage during extended sync operations\n   - Test auto-recovery after simulated network failures\n\n4. Acceptance Criteria:\n   - 100% of tasks sync correctly in both directions\n   - All task fields (title, description, status, priority, etc.) map correctly\n   - Auto-sync triggers function as scheduled\n   - System recovers gracefully from interruptions\n   - Sync operations complete within acceptable time limits (define based on data volume)\n   - No errors in system logs related to sync operations\n\n5. Final Verification:\n   - Run a 24-hour continuous operation test with periodic sync operations\n   - Verify system stability and data integrity after the extended test\n   - Document final test results and declare the feature ready for production use",
+      "status": "pending",
+      "dependencies": [
+        135,
+        134
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 141,
+      "title": "Execute AI Verification Test Task",
+      "description": "Create and execute a simple test task to verify that the AI task generation system is working correctly and producing properly formatted task specifications.",
+      "details": "1. Design a simple test case for the AI task generation system:\n   - Create a basic task request with minimal context\n   - Include standard required fields (title, description, etc.)\n   - Ensure the request follows the established format for AI task generation\n\n2. Execute the test case:\n   - Use the command line interface to submit the test task request to the AI system\n   - Capture the complete response from the AI system\n   - Log all interactions for analysis\n\n3. Verify the AI response:\n   - Check that the response contains all required fields according to the task schema\n   - Verify that the JSON structure is valid and properly formatted\n   - Ensure dependencies are correctly identified and referenced\n   - Validate that the content is coherent and relevant to the request\n\n4. Document the results:\n   - Create a test report documenting the request, response, and verification results\n   - Note any discrepancies or issues found during testing\n   - Provide recommendations for improvements if necessary\n\n5. Perform a follow-up test with more complex requirements:\n   - Create a test case with dependencies, detailed requirements, and edge cases\n   - Execute the test and compare results with the simpler test case\n   - Evaluate the AI's ability to handle varying complexity levels",
+      "testStrategy": "1. Prepare test environment:\n   - Ensure the AI integration is properly configured\n   - Verify API keys and endpoints are correctly set up\n   - Create a clean test directory to avoid interference from existing tasks\n\n2. Execute basic verification test:\n   - Run the command: `task ai create \"Test task to verify AI is working correctly\"`\n   - Capture the complete output including any error messages\n   - Verify that a properly formatted task is created in the tasks.json file\n\n3. Validate the generated task:\n   - Use `task validate` to verify the task structure is valid\n   - Check that all required fields are present and properly formatted\n   - Ensure the task can be displayed with `task show`\n   - Verify that dependencies are correctly referenced\n\n4. Test edge cases:\n   - Submit an empty request to test error handling\n   - Submit an extremely detailed request to test handling of complex inputs\n   - Test with special characters and unusual formatting\n\n5. Verify integration with other system components:\n   - Check that the generated task appears correctly in task listings\n   - Verify that the task can be edited and updated\n   - Ensure the task can be properly synced with Monday.com if applicable\n\n6. Document results:\n   - Create a test report with screenshots of inputs and outputs\n   - Note any discrepancies between expected and actual results\n   - Document any bugs or issues discovered during testing",
+      "status": "pending",
+      "dependencies": [
+        5,
+        136,
+        139
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 142,
+      "title": "Final Test of Fixed Auto-Sync Functionality",
+      "description": "Conduct a comprehensive test of the fixed auto-sync functionality between the local task system and Monday.com to ensure all synchronization issues have been resolved.",
+      "details": "This task involves verifying that the auto-sync functionality is working correctly after recent fixes:\n\n1. Set up a controlled test environment with known task states in both the local system and Monday.com\n2. Test bidirectional synchronization:\n   - Create new tasks locally and verify they appear in Monday.com\n   - Create new items in Monday.com and verify they appear as local tasks\n   - Update task status locally and verify changes propagate to Monday.com\n   - Update item status in Monday.com and verify changes propagate to local tasks\n   - Test edge cases like conflicting updates and resolution mechanisms\n3. Verify automatic synchronization triggers:\n   - Test time-based auto-sync (if implemented)\n   - Test event-based triggers (task creation, modification, etc.)\n4. Test error handling and recovery:\n   - Simulate network failures during sync\n   - Test behavior with invalid data\n   - Verify logging and error reporting\n5. Measure performance metrics:\n   - Sync completion time\n   - Resource usage during sync operations\n   - Handling of large data sets\n6. Document any remaining issues or edge cases that need addressing\n\nThe test should be thorough and cover all aspects of the auto-sync functionality, with particular attention to areas that were previously problematic.",
+      "testStrategy": "1. Create a test plan document outlining all test scenarios and expected outcomes\n2. Set up isolated test environments to prevent affecting production data\n3. Prepare test data sets with various task types, statuses, and edge cases\n4. Execute the following test scenarios:\n   - Basic sync: Create 5 tasks locally, verify they appear in Monday.com with correct attributes\n   - Reverse sync: Create 5 items in Monday.com, verify they appear locally with correct attributes\n   - Status updates: Change status of 3 tasks locally, verify changes in Monday.com\n   - Reverse status updates: Change status of 3 items in Monday.com, verify local changes\n   - Conflict testing: Update the same task/item on both systems, verify resolution\n   - Batch operations: Test syncing multiple tasks simultaneously\n5. Test automatic sync triggers:\n   - Wait for timed sync if applicable\n   - Trigger events that should cause sync and verify\n6. Error handling tests:\n   - Disconnect network during sync, verify recovery\n   - Introduce invalid data, verify error handling\n7. Performance testing:\n   - Time sync operations with different data volumes\n   - Monitor resource usage during sync\n8. Document all test results, including screenshots, logs, and metrics\n9. Create a final report summarizing test results, any issues found, and recommendations",
+      "status": "pending",
+      "dependencies": [
+        140,
+        134,
+        135,
+        125,
+        123
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": "9295874549",
+      "lastSyncedAt": "2025-06-03T20:24:03.117Z",
+      "syncStatus": "synced",
+      "syncError": null
+    },
+    {
+      "id": 143,
+      "title": "Document Auto-Sync Functionality Test Results",
+      "description": "Create comprehensive documentation of the final auto-sync functionality test results, including all test cases, outcomes, and any remaining edge cases or considerations.",
+      "details": "This task involves creating detailed documentation of the auto-sync functionality testing process and results:\n\n1. Compile all test cases executed during Task 142 (Final Test of Fixed Auto-Sync Functionality)\n2. Document the test environment setup and configuration\n3. Create detailed records of:\n   - Bidirectional sync test results (local → Monday.com and Monday.com → local)\n   - Edge case handling results\n   - Performance metrics (sync speed, resource usage)\n   - Error handling and recovery test outcomes\n   - Conflict resolution test results\n4. Include screenshots or logs demonstrating successful synchronization\n5. Document any remaining minor issues, limitations, or edge cases\n6. Create a summary report highlighting:\n   - Overall sync reliability percentage\n   - Average sync time metrics\n   - Comparison to previous sync implementation\n   - Recommendations for future improvements\n7. Prepare documentation in both technical format (for developers) and user-friendly format (for end users)\n8. Include troubleshooting section for common sync issues and their resolutions",
+      "testStrategy": "To verify this task has been completed correctly:\n\n1. Review the documentation to ensure it covers all test cases from Task 142\n2. Verify that all test results are clearly documented with:\n   - Test case description\n   - Expected outcome\n   - Actual outcome\n   - Supporting evidence (screenshots, logs)\n3. Confirm the documentation includes:\n   - Complete test environment details\n   - Performance metrics\n   - Edge case handling\n   - Error scenarios and resolutions\n4. Have a team member not involved in testing review the documentation for clarity and completeness\n5. Ensure the documentation is stored in the appropriate project repository location\n6. Verify that both technical and user-friendly versions are available\n7. Confirm the troubleshooting guide covers common sync issues\n8. Present the documentation in a team review meeting to gather feedback\n9. Make any necessary revisions based on team feedback",
+      "status": "pending",
+      "dependencies": [
+        142
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": "9296149708",
+      "lastSyncedAt": "2025-06-03T20:49:01.329Z",
+      "syncStatus": "synced",
+      "syncError": null
+    },
+    {
+      "id": 144,
+      "title": "Auto-Sync Integration Verification Test",
+      "description": "Create and execute a comprehensive test plan to verify the auto-sync integration between the local task system and Monday.com is functioning correctly in all scenarios.",
+      "details": "This task involves creating and executing a structured test plan to verify the auto-sync integration:\n\n1. Prepare test environment:\n   - Create a dedicated test board in Monday.com\n   - Set up test configuration in the local task system\n   - Ensure clean state on both sides before testing\n\n2. Test bidirectional synchronization:\n   - Create new tasks locally and verify they appear in Monday.com with correct attributes\n   - Create new items in Monday.com and verify they appear as local tasks\n   - Update task attributes locally (status, priority, description) and verify changes sync to Monday.com\n   - Update item attributes in Monday.com and verify changes sync to local tasks\n   - Delete tasks locally and verify removal from Monday.com\n   - Archive items in Monday.com and verify handling in local system\n\n3. Test edge cases:\n   - Conflict resolution when same task/item is modified in both systems\n   - Network interruption handling during sync\n   - Rate limiting and retry mechanisms\n   - Large batch synchronization performance\n   - Special character handling in task titles and descriptions\n   - Handling of task relationships and dependencies\n\n4. Test automation:\n   - Verify automatic sync triggers work correctly (time-based, event-based)\n   - Test manual sync commands function as expected\n   - Verify sync status reporting is accurate\n\n5. Document all test cases, expected results, and actual outcomes in a structured format for inclusion in project documentation.",
+      "testStrategy": "1. Create a test matrix covering all test scenarios identified in the implementation details.\n\n2. For each test case:\n   - Document the initial state of both systems\n   - Execute the test action (create/update/delete in either system)\n   - Wait for synchronization to complete\n   - Verify the expected outcome in both systems\n   - Document any discrepancies or issues\n\n3. Automated verification:\n   - Create a script that performs basic sync operations and verifies results\n   - Run the script multiple times to ensure consistency\n   - Capture logs during test execution for analysis\n\n4. Manual verification:\n   - Perform visual inspection of synchronized tasks in both systems\n   - Verify all attributes are correctly synchronized (title, description, status, priority, etc.)\n   - Test user experience of the synchronization process\n\n5. Performance testing:\n   - Measure sync time for different batch sizes\n   - Monitor system resource usage during sync operations\n   - Test under different network conditions\n\n6. Create a comprehensive test report documenting:\n   - Test environment configuration\n   - All test cases executed\n   - Pass/fail results for each test case\n   - Any issues or anomalies discovered\n   - Recommendations for improvements\n\n7. Present findings to the development team and stakeholders.",
+      "status": "pending",
+      "dependencies": [
+        142,
+        143,
+        100
+      ],
+      "priority": "low",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 145,
+      "title": "MCP Functionality Verification Test",
+      "description": "Create and execute a comprehensive test plan to verify that the MCP (Master Control Program) interface is functioning correctly for basic task operations.",
+      "details": "Implement a verification test suite for the MCP interface that covers:\n\n1. Task Creation Testing:\n   - Test creating tasks with minimal required fields\n   - Test creating tasks with all available fields\n   - Test validation of required fields\n   - Test handling of invalid input data\n   - Verify correct ID assignment for new tasks\n\n2. Task Update Testing:\n   - Test updating individual task fields (title, description, status, priority)\n   - Test updating multiple fields simultaneously\n   - Test handling of invalid update requests\n   - Verify proper validation of updated fields\n   - Test updating task dependencies\n\n3. Status Management Testing:\n   - Test all status transitions (pending → in-progress → done)\n   - Test invalid status transitions\n   - Verify status change timestamps are recorded correctly\n   - Test status filtering functionality\n\n4. Edge Case Testing:\n   - Test behavior with empty task list\n   - Test with large number of tasks\n   - Test concurrent operations\n   - Test system recovery after errors\n\nCreate a test script that automates these tests and produces a detailed report of results. The script should be designed to run independently and verify that all core MCP functionality is working as expected.",
+      "testStrategy": "1. Setup Test Environment:\n   - Create a separate test directory with a clean tasks.json file\n   - Implement test fixtures for different task scenarios\n\n2. Automated Test Execution:\n   - Run the test script with `node test-mcp-functionality.js`\n   - The script should execute all test cases in sequence\n   - Each test should have clear pass/fail criteria\n   - Capture and log all test results\n\n3. Verification Steps:\n   - Verify task creation by checking the tasks.json file contains the expected data\n   - Verify task updates by comparing before/after states\n   - Verify status management by tracking status changes through the workflow\n   - Check that all validation rules are properly enforced\n   - Verify error handling by intentionally triggering error conditions\n\n4. Test Report:\n   - Generate a comprehensive test report showing:\n     - Number of tests run\n     - Number of tests passed/failed\n     - Detailed error messages for any failures\n     - Performance metrics (execution time)\n\n5. Manual Verification:\n   - Perform spot checks on key functionality using the CLI\n   - Verify that the MCP interface is consistent across different access methods\n\nThe test is considered successful when all automated tests pass and the manual verification confirms the system behaves as expected.",
+      "status": "in-progress",
+      "dependencies": [
+        1,
+        3,
+        136
+      ],
+      "priority": "high",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement Task Creation Test Suite",
+          "description": "Develop automated tests for task creation functionality in the MCP interface",
+          "dependencies": [],
+          "details": "Create a test module that validates all task creation scenarios including: creating tasks with minimal fields, creating tasks with all fields, validation of required fields, handling of invalid input data, and verification of correct ID assignment. Use mock data generators to create varied test cases. Implement assertions to verify expected responses and database state after each operation.",
+          "status": "pending",
+          "testStrategy": "Use parameterized tests to cover multiple input variations. Include both positive and negative test cases. Verify API responses and database state after each test."
+        },
+        {
+          "id": 2,
+          "title": "Implement Task Update Test Suite",
+          "description": "Develop automated tests for task update functionality in the MCP interface",
+          "dependencies": [
+            1
+          ],
+          "details": "Create a test module that validates all task update scenarios including: updating individual fields (title, description, status, priority), updating multiple fields simultaneously, handling of invalid update requests, validation of updated fields, and updating task dependencies. Create fixture data with pre-existing tasks to test against. Implement assertions to verify the state of tasks after updates.",
+          "status": "pending",
+          "testStrategy": "Create fixture data before tests. Test each field update individually and in combinations. Verify both API responses and resulting database state. Include permission-based tests if applicable."
+        },
+        {
+          "id": 3,
+          "title": "Implement Status Management Test Suite",
+          "description": "Develop automated tests for task status management functionality in the MCP interface",
+          "dependencies": [
+            2
+          ],
+          "details": "Create a test module that validates all status management scenarios including: all valid status transitions (pending → in-progress → done), invalid status transitions, verification of status change timestamps, and status filtering functionality. Implement test fixtures with tasks in various states. Test both individual status changes and bulk operations if supported.",
+          "status": "pending",
+          "testStrategy": "Create a state transition matrix to ensure all transitions are tested. Use time-sensitive assertions to verify timestamps. Test status filtering with various combinations of statuses."
+        },
+        {
+          "id": 4,
+          "title": "Implement Edge Case Test Suite",
+          "description": "Develop automated tests for edge cases and boundary conditions in the MCP interface",
+          "dependencies": [
+            3
+          ],
+          "details": "Create a test module that validates system behavior under edge conditions including: empty task list operations, large number of tasks (performance testing), concurrent operations (race conditions), and system recovery after errors. Implement stress tests with high task volumes and concurrent operations. Test error recovery by simulating failures and verifying system state after recovery.",
+          "status": "pending",
+          "testStrategy": "Use performance testing tools for volume tests. Implement thread-safe test cases for concurrency testing. Create controlled failure scenarios to test recovery mechanisms."
+        },
+        {
+          "id": 5,
+          "title": "Create Test Automation Framework and Reporting",
+          "description": "Develop a framework to execute all test suites and generate comprehensive test reports",
+          "dependencies": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "details": "Create a main test runner that executes all test suites in sequence or parallel as appropriate. Implement detailed logging of test results, including pass/fail status, execution time, and error details for failed tests. Generate a comprehensive HTML report showing test coverage and results. Include setup and teardown procedures to ensure tests can run independently and repeatedly.",
+          "status": "pending",
+          "testStrategy": "Implement CI/CD integration to run tests automatically. Create both summary and detailed reporting views. Include test coverage metrics and execution time statistics."
+        }
+      ],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 146,
+      "title": "Test Monday.com Auto-Sync Task Creation",
+      "description": "Verify that tasks created via MCP automatically appear on the Monday.com board when auto-sync is enabled, confirming bidirectional synchronization is working properly.",
+      "details": "This task involves testing the automatic synchronization of tasks from the local system to Monday.com when created through the Master Control Program (MCP) interface. The implementation steps include:\n\n1. Ensure auto-sync is properly enabled in the configuration:\n   ```javascript\n   // Verify configuration in config.json\n   {\n     \"monday\": {\n       \"autoSync\": true,\n       \"syncInterval\": 300, // seconds\n       \"boardId\": \"your_board_id\"\n     }\n   }\n   ```\n\n2. Create a test script that:\n   - Creates a new task via MCP interface\n   - Includes various task attributes (title, description, status, priority)\n   - Monitors the sync process\n   - Verifies the task appears on Monday.com board\n\n3. Test different scenarios:\n   - Create a simple task with minimal attributes\n   - Create a complex task with all available attributes\n   - Create a task with subtasks\n   - Create multiple tasks in succession\n\n4. Monitor the sync logs to ensure:\n   - Proper task-to-item mapping is occurring\n   - No errors are being thrown during the sync process\n   - Sync is happening within the expected timeframe\n\n5. Verify that task attributes are correctly mapped to Monday.com columns:\n   - Task title → Item name\n   - Task status → Status column\n   - Task priority → Priority column\n   - Task description → Description column\n   - Task dependencies → Dependencies column (if applicable)\n\n6. Document any discrepancies or issues found during testing, particularly focusing on:\n   - Sync timing and performance\n   - Field mapping accuracy\n   - Error handling and recovery\n   - Edge cases (special characters, long text fields, etc.)",
+      "testStrategy": "1. **Setup Test Environment**:\n   - Ensure Monday.com API credentials are properly configured\n   - Verify auto-sync is enabled in the configuration\n   - Clear any existing test tasks from previous runs\n   - Have Monday.com board open in browser for visual verification\n\n2. **Basic Task Creation Test**:\n   ```bash\n   # Create a test task via MCP\n   ./mcp task create --title \"Auto-Sync Test Task\" --description \"Testing auto-sync functionality\" --priority high\n   ```\n   - Record the task ID from the output\n   - Wait for the configured sync interval to pass\n   - Verify the task appears on Monday.com board with correct attributes\n\n3. **Complex Task Creation Test**:\n   ```bash\n   # Create a complex task with all attributes\n   ./mcp task create --title \"Complex Auto-Sync Test\" --description \"Testing all attributes\" --priority medium --status \"in progress\" --details \"Detailed test information\" --testStrategy \"Verify on Monday\"\n   ```\n   - Verify all attributes are correctly mapped to Monday.com columns\n\n4. **Multiple Task Creation Test**:\n   - Create 5 tasks in quick succession\n   - Verify all tasks appear on Monday.com after sync\n\n5. **Subtask Creation Test**:\n   ```bash\n   # Create a parent task\n   ./mcp task create --title \"Parent Task for Auto-Sync\"\n   \n   # Add subtasks to the parent\n   ./mcp task create --title \"Subtask 1\" --parent [PARENT_ID]\n   ./mcp task create --title \"Subtask 2\" --parent [PARENT_ID]\n   ```\n   - Verify parent-child relationship is maintained on Monday.com\n\n6. **Verification Checklist**:\n   - Task titles match exactly\n   - Task descriptions are properly formatted\n   - Status values are correctly mapped\n   - Priority levels are correctly mapped\n   - Creation timestamps are accurate\n   - Subtask relationships are maintained\n   - No duplicate tasks are created\n\n7. **Log Analysis**:\n   - Review sync logs for any errors or warnings\n   - Verify sync timing is within expected parameters\n   - Check for any performance issues during sync\n\n8. **Document Results**:\n   - Create a test report documenting all test cases and results\n   - Note any discrepancies or issues found\n   - Provide recommendations for improvements if needed",
+      "status": "pending",
+      "dependencies": [
+        134,
+        144
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": "9296401620",
+      "lastSyncedAt": "2025-06-03T21:18:18.695Z",
+      "syncStatus": "synced",
       "syncError": null
     }
   ]

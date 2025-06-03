@@ -2,13 +2,14 @@ import path from 'path';
 import chalk from 'chalk';
 import boxen from 'boxen';
 
-import { log, readJSON, writeJSON, findTaskById } from '../utils.js';
+import { log, readJSON, writeJSON, findTaskById, findProjectRoot } from '../utils.js';
 import { displayBanner } from '../ui.js';
 import { validateTaskDependencies } from '../dependency-manager.js';
 import { getDebugFlag } from '../config-manager.js';
 import updateSingleTaskStatus from './update-single-task-status.js';
 import generateTaskFiles from './generate-task-files.js';
 import { markTaskForSync } from './monday-sync-utils.js';
+import { onTaskStatusChanged } from './auto-sync-hooks.js';
 import {
 	isValidTaskStatus,
 	TASK_STATUS_OPTIONS
@@ -19,7 +20,7 @@ import {
  * @param {string} tasksPath - Path to the tasks.json file
  * @param {string} taskIdInput - Task ID(s) to update
  * @param {string} newStatus - New status
- * @param {Object} options - Additional options (mcpLog for MCP mode)
+ * @param {Object} options - Additional options (mcpLog for MCP mode, session, projectRoot)
  * @returns {Object|undefined} Result object in MCP mode, undefined in CLI mode
  */
 async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
@@ -31,6 +32,9 @@ async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
 		}
 		// Determine if we're in MCP mode by checking for mcpLog
 		const isMcpMode = !!options?.mcpLog;
+		
+		// Determine project root for sync hooks
+		const projectRoot = options.projectRoot || findProjectRoot(path.dirname(tasksPath));
 
 		// Only display UI elements if not in MCP mode
 		if (!isMcpMode) {
@@ -54,6 +58,16 @@ async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
 		// Handle multiple task IDs (comma-separated)
 		const taskIds = taskIdInput.split(',').map((id) => id.trim());
 		const updatedTasks = [];
+		const syncResults = [];
+
+		// Store old statuses for sync hooks
+		const oldStatuses = {};
+		for (const id of taskIds) {
+			const task = findTaskById(data.tasks, id);
+			if (task) {
+				oldStatuses[id] = task.status;
+			}
+		}
 
 		// Update each task
 		for (const id of taskIds) {
@@ -63,6 +77,42 @@ async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
 
 		// Write the updated tasks to the file
 		writeJSON(tasksPath, data);
+
+		// Trigger automatic sync hooks for each updated task
+		for (const id of updatedTasks) {
+			const task = findTaskById(data.tasks, id);
+			if (task) {
+				try {
+					// Call the auto-sync hook for status changes
+					const syncSuccess = await onTaskStatusChanged(
+						projectRoot,
+						task,
+						oldStatuses[id],
+						{
+							session: options.session,
+							mcpLog: options.mcpLog,
+							throwOnError: false // Don't throw errors in set-status, just log them
+						}
+					);
+					
+					syncResults.push({
+						taskId: id,
+						syncSuccess,
+						oldStatus: oldStatuses[id],
+						newStatus: task.status
+					});
+				} catch (error) {
+					log('warn', `Auto-sync failed for task ${id}: ${error.message}`);
+					syncResults.push({
+						taskId: id,
+						syncSuccess: false,
+						syncError: error.message,
+						oldStatus: oldStatuses[id],
+						newStatus: task.status
+					});
+				}
+			}
+		}
 
 		// Mark tasks for Monday.com sync unless this is part of a sync operation
 		// Check if any of the updated tasks have Monday sync data to avoid marking during sync
@@ -89,13 +139,21 @@ async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
 			for (const id of updatedTasks) {
 				const task = findTaskById(data.tasks, id);
 				const taskName = task ? task.title : id;
+				const syncResult = syncResults.find(r => r.taskId === id);
 
 				console.log(
 					boxen(
 						chalk.white.bold(`Successfully updated task ${id} status:`) +
 							'\n' +
-							`From: ${chalk.yellow(task ? task.status : 'unknown')}\n` +
-							`To:   ${chalk.green(newStatus)}`,
+							`From: ${chalk.yellow(syncResult?.oldStatus || 'unknown')}\n` +
+							`To:   ${chalk.green(newStatus)}` +
+							(syncResult?.syncSuccess === true 
+								? '\n' + chalk.green('✅ Synced to Monday.com')
+								: syncResult?.syncSuccess === false && !syncResult?.syncError
+								? '\n' + chalk.yellow('⚠️ Monday.com sync skipped (not in hybrid mode)')
+								: syncResult?.syncError
+								? '\n' + chalk.red(`❌ Monday.com sync failed: ${syncResult.syncError}`)
+								: ''),
 						{ padding: 1, borderColor: 'green', borderStyle: 'round' }
 					)
 				);
@@ -108,7 +166,8 @@ async function setTaskStatus(tasksPath, taskIdInput, newStatus, options = {}) {
 			updatedTasks: updatedTasks.map((id) => ({
 				id,
 				status: newStatus
-			}))
+			})),
+			syncResults: syncResults // Include sync results in response
 		};
 	} catch (error) {
 		log('error', `Error setting task status: ${error.message}`);

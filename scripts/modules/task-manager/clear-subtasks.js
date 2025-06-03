@@ -6,13 +6,18 @@ import Table from 'cli-table3';
 import { log, readJSON, writeJSON, truncate, isSilentMode } from '../utils.js';
 import { displayBanner } from '../ui.js';
 import generateTaskFiles from './generate-task-files.js';
+import { onSubtaskDeleted } from './auto-sync-hooks.js';
 
 /**
  * Clear subtasks from specified tasks
  * @param {string} tasksPath - Path to the tasks.json file
  * @param {string} taskIds - Task IDs to clear subtasks from
+ * @param {Object} context - Context object containing session, mcpLog, projectRoot
  */
-function clearSubtasks(tasksPath, taskIds) {
+async function clearSubtasks(tasksPath, taskIds, context = {}) {
+	// Extract context for sync hooks
+	const { session, mcpLog, projectRoot } = context;
+
 	displayBanner();
 
 	log('info', `Reading tasks from ${tasksPath}...`);
@@ -48,17 +53,17 @@ function clearSubtasks(tasksPath, taskIds) {
 		style: { head: [], border: [] }
 	});
 
-	taskIdArray.forEach((taskId) => {
+	for (const taskId of taskIdArray) {
 		const id = parseInt(taskId, 10);
 		if (isNaN(id)) {
 			log('error', `Invalid task ID: ${taskId}`);
-			return;
+			continue;
 		}
 
 		const task = data.tasks.find((t) => t.id === id);
 		if (!task) {
 			log('error', `Task ${id} not found`);
-			return;
+			continue;
 		}
 
 		if (!task.subtasks || task.subtasks.length === 0) {
@@ -68,10 +73,28 @@ function clearSubtasks(tasksPath, taskIds) {
 				truncate(task.title, 47),
 				chalk.yellow('No subtasks')
 			]);
-			return;
+			continue;
 		}
 
 		const subtaskCount = task.subtasks.length;
+		
+		// Call auto-sync hook for each subtask deletion BEFORE removing them
+		if (projectRoot && task.subtasks) {
+			for (const subtask of task.subtasks) {
+				try {
+					await onSubtaskDeleted(projectRoot, task, subtask, {
+						session,
+						mcpLog,
+						throwOnError: false // Don't throw errors, just log them
+					});
+					log('info', `Subtask ${id}.${subtask.id} auto-sync deletion completed`);
+				} catch (syncError) {
+					log('warn', `Auto-sync failed for subtask ${id}.${subtask.id} deletion: ${syncError.message}`);
+				}
+			}
+		}
+
+		// Clear all subtasks from the task
 		task.subtasks = [];
 		clearedCount++;
 		log('info', `Cleared ${subtaskCount} subtasks from task ${id}`);
@@ -81,7 +104,7 @@ function clearSubtasks(tasksPath, taskIds) {
 			truncate(task.title, 47),
 			chalk.green(`${subtaskCount} subtasks cleared`)
 		]);
-	});
+	}
 
 	if (clearedCount > 0) {
 		writeJSON(tasksPath, data);

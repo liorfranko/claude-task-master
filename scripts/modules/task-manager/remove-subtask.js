@@ -1,6 +1,7 @@
 import path from 'path';
-import { log, readJSON, writeJSON } from '../utils.js';
+import { log, readJSON, writeJSON, findProjectRoot } from '../utils.js';
 import generateTaskFiles from './generate-task-files.js';
+import { onSubtaskDeleted } from './auto-sync-hooks.js';
 
 /**
  * Remove a subtask from its parent task
@@ -8,16 +9,22 @@ import generateTaskFiles from './generate-task-files.js';
  * @param {string} subtaskId - ID of the subtask to remove in format "parentId.subtaskId"
  * @param {boolean} convertToTask - Whether to convert the subtask to a standalone task
  * @param {boolean} generateFiles - Whether to regenerate task files after removing the subtask
+ * @param {Object} context - Context object with session, mcpLog, projectRoot for sync hooks
  * @returns {Object|null} The removed subtask if convertToTask is true, otherwise null
  */
 async function removeSubtask(
 	tasksPath,
 	subtaskId,
 	convertToTask = false,
-	generateFiles = true
+	generateFiles = true,
+	context = {}
 ) {
 	try {
 		log('info', `Removing subtask ${subtaskId}...`);
+
+		// Extract context for sync hooks
+		const { session, mcpLog, projectRoot: providedProjectRoot } = context;
+		const projectRoot = providedProjectRoot || findProjectRoot(path.dirname(tasksPath));
 
 		// Read the existing tasks
 		const data = readJSON(tasksPath);
@@ -57,6 +64,20 @@ async function removeSubtask(
 
 		// Get a copy of the subtask before removing it
 		const removedSubtask = { ...parentTask.subtasks[subtaskIndex] };
+
+		// Call auto-sync hook for subtask deletion BEFORE removing it
+		if (projectRoot) {
+			try {
+				await onSubtaskDeleted(projectRoot, removedSubtask, parentTask, {
+					session,
+					mcpLog,
+					throwOnError: false // Don't throw errors, just log them
+				});
+				log('info', `Subtask ${subtaskId} auto-sync deletion completed`);
+			} catch (syncError) {
+				log('warn', `Auto-sync failed for subtask ${subtaskId} deletion: ${syncError.message}`);
+			}
+		}
 
 		// Remove the subtask from the parent
 		parentTask.subtasks.splice(subtaskIndex, 1);

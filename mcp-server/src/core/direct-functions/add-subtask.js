@@ -3,6 +3,8 @@
  */
 
 import { addSubtask } from '../../../../scripts/modules/task-manager.js';
+import { onSubtaskCreated } from '../../../../scripts/modules/task-manager/auto-sync-hooks.js';
+import { readJSON } from '../../../../scripts/modules/utils.js';
 import {
 	enableSilentMode,
 	disableSilentMode
@@ -20,10 +22,13 @@ import {
  * @param {string} [args.status] - Status for new subtask (default: 'pending')
  * @param {string} [args.dependencies] - Comma-separated list of dependency IDs
  * @param {boolean} [args.skipGenerate] - Skip regenerating task files
+ * @param {string} [args.projectRoot] - Project root path for sync context
  * @param {Object} log - Logger object
+ * @param {Object} context - Context object containing session data
  * @returns {Promise<{success: boolean, data?: Object, error?: string}>}
  */
-export async function addSubtaskDirect(args, log) {
+export async function addSubtaskDirect(args, log, context = {}) {
+	const { session } = context;
 	// Destructure expected args
 	const {
 		tasksJsonPath,
@@ -34,8 +39,10 @@ export async function addSubtaskDirect(args, log) {
 		details,
 		status,
 		dependencies: dependenciesStr,
-		skipGenerate
+		skipGenerate,
+		projectRoot
 	} = args;
+	
 	try {
 		log.info(`Adding subtask with args: ${JSON.stringify(args)}`);
 
@@ -96,10 +103,13 @@ export async function addSubtaskDirect(args, log) {
 		// Enable silent mode to prevent console logs from interfering with JSON response
 		enableSilentMode();
 
+		let result;
+		let parentTask;
+
 		// Case 1: Convert existing task to subtask
 		if (existingTaskId) {
 			log.info(`Converting task ${existingTaskId} to a subtask of ${parentId}`);
-			const result = await addSubtask(
+			result = await addSubtask(
 				tasksPath,
 				parentId,
 				existingTaskId,
@@ -109,6 +119,24 @@ export async function addSubtaskDirect(args, log) {
 
 			// Restore normal logging
 			disableSilentMode();
+
+			// Get the parent task for sync hook
+			if (projectRoot && result) {
+				try {
+					const data = readJSON(tasksPath);
+					parentTask = data.tasks.find(t => t.id === parentId);
+					
+					if (parentTask) {
+						// Call auto-sync hook for subtask creation
+						await onSubtaskCreated(projectRoot, parentTask, result, {
+							session,
+							mcpLog: log
+						});
+					}
+				} catch (syncError) {
+					log.warn(`Auto-sync failed for converted subtask: ${syncError.message}`);
+				}
+			}
 
 			return {
 				success: true,
@@ -130,7 +158,7 @@ export async function addSubtaskDirect(args, log) {
 				dependencies: dependencies
 			};
 
-			const result = await addSubtask(
+			result = await addSubtask(
 				tasksPath,
 				parentId,
 				null,
@@ -140,6 +168,24 @@ export async function addSubtaskDirect(args, log) {
 
 			// Restore normal logging
 			disableSilentMode();
+
+			// Get the parent task for sync hook
+			if (projectRoot && result) {
+				try {
+					const data = readJSON(tasksPath);
+					parentTask = data.tasks.find(t => t.id === parentId);
+					
+					if (parentTask) {
+						// Call auto-sync hook for subtask creation
+						await onSubtaskCreated(projectRoot, parentTask, result, {
+							session,
+							mcpLog: log
+						});
+					}
+				} catch (syncError) {
+					log.warn(`Auto-sync failed for new subtask: ${syncError.message}`);
+				}
+			}
 
 			return {
 				success: true,

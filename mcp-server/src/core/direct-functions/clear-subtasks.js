@@ -13,14 +13,18 @@ import fs from 'fs';
  * Clear subtasks from specified tasks
  * @param {Object} args - Function arguments
  * @param {string} args.tasksJsonPath - Explicit path to the tasks.json file.
+ * @param {string} args.projectRoot - Project root directory for auto-sync hooks
  * @param {string} [args.id] - Task IDs (comma-separated) to clear subtasks from
  * @param {boolean} [args.all] - Clear subtasks from all tasks
  * @param {Object} log - Logger object
+ * @param {Object} context - Context object containing session information
  * @returns {Promise<{success: boolean, data?: Object, error?: {code: string, message: string}}>}
  */
-export async function clearSubtasksDirect(args, log) {
+export async function clearSubtasksDirect(args, log, context = {}) {
 	// Destructure expected args
-	const { tasksJsonPath, id, all } = args;
+	const { tasksJsonPath, projectRoot, id, all } = args;
+	const { session } = context;
+	
 	try {
 		log.info(`Clearing subtasks with args: ${JSON.stringify(args)}`);
 
@@ -88,8 +92,15 @@ export async function clearSubtasksDirect(args, log) {
 		// Enable silent mode to prevent console logs from interfering with JSON response
 		enableSilentMode();
 
-		// Call the core function
-		clearSubtasks(tasksPath, taskIds);
+		// Prepare context for auto-sync hooks
+		const syncContext = {
+			session,
+			mcpLog: log,
+			projectRoot
+		};
+
+		// Call the core function with context for auto-sync hooks
+		await clearSubtasks(tasksPath, taskIds, syncContext);
 
 		// Restore normal logging
 		disableSilentMode();

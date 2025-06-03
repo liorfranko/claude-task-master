@@ -4,14 +4,17 @@ import path from 'path';
 import { log, readJSON, writeJSON } from '../utils.js';
 import generateTaskFiles from './generate-task-files.js';
 import taskExists from './task-exists.js';
+import { onTaskDeleted } from './auto-sync-hooks.js';
+import { findProjectRoot } from '../utils.js';
 
 /**
  * Removes one or more tasks or subtasks from the tasks file
  * @param {string} tasksPath - Path to the tasks file
  * @param {string} taskIds - Comma-separated string of task/subtask IDs to remove (e.g., '5,6.1,7')
+ * @param {Object} options - Options object with session, mcpLog, projectRoot for sync hooks
  * @returns {Object} Result object with success status, messages, and removed task info
  */
-async function removeTask(tasksPath, taskIds) {
+async function removeTask(tasksPath, taskIds, options = {}) {
 	const results = {
 		success: true,
 		messages: [],
@@ -28,6 +31,10 @@ async function removeTask(tasksPath, taskIds) {
 		results.errors.push('No valid task IDs provided.');
 		return results;
 	}
+
+	// Determine project root for sync hooks
+	const { session, mcpLog, projectRoot: providedProjectRoot } = options;
+	const projectRoot = providedProjectRoot || findProjectRoot(path.dirname(tasksPath));
 
 	try {
 		// Read the tasks file ONCE before the loop
@@ -72,12 +79,24 @@ async function removeTask(tasksPath, taskIds) {
 						);
 					}
 
-					// Store the subtask info before removal
-					const removedSubtask = {
+					// Store the subtask info before removal for sync
+					const subtaskToDelete = {
 						...parentTask.subtasks[subtaskIndex],
 						parentTaskId: parentTaskId
 					};
-					results.removedTasks.push(removedSubtask);
+					
+					// Call auto-sync hook for subtask deletion
+					try {
+						await onTaskDeleted(projectRoot, subtaskToDelete, {
+							session,
+							mcpLog,
+							throwOnError: false // Don't throw errors, just log them
+						});
+					} catch (syncError) {
+						log('warn', `Auto-sync failed for subtask ${taskId} deletion: ${syncError.message}`);
+					}
+
+					results.removedTasks.push(subtaskToDelete);
 
 					// Remove the subtask from the parent
 					parentTask.subtasks.splice(subtaskIndex, 1);
@@ -94,9 +113,21 @@ async function removeTask(tasksPath, taskIds) {
 						throw new Error(`Task with ID ${taskId} not found`);
 					}
 
-					// Store the task info before removal
-					const removedTask = data.tasks[taskIndex];
-					results.removedTasks.push(removedTask);
+					// Store the task info before removal for sync
+					const taskToDelete = data.tasks[taskIndex];
+					
+					// Call auto-sync hook for task deletion
+					try {
+						await onTaskDeleted(projectRoot, taskToDelete, {
+							session,
+							mcpLog,
+							throwOnError: false // Don't throw errors, just log them
+						});
+					} catch (syncError) {
+						log('warn', `Auto-sync failed for task ${taskId} deletion: ${syncError.message}`);
+					}
+
+					results.removedTasks.push(taskToDelete);
 					tasksToDeleteFiles.push(taskIdNum); // Add to list for file deletion
 
 					// Remove the task from the main array
