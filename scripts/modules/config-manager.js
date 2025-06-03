@@ -521,6 +521,24 @@ function isApiKeySet(providerName, session = null, projectRoot = null) {
 	if (providerName?.toLowerCase() === 'ollama') {
 		return true; // Indicate key status is effectively "OK"
 	}
+	
+	// Special handling for Bedrock - requires AWS credentials
+	if (providerName?.toLowerCase() === 'bedrock') {
+		const awsAccessKeyId = resolveEnvVariable('AWS_ACCESS_KEY_ID', session, projectRoot);
+		const awsSecretAccessKey = resolveEnvVariable('AWS_SECRET_ACCESS_KEY', session, projectRoot);
+		
+		// Check if both required AWS credentials exist and are not empty/placeholders
+		return (
+			awsAccessKeyId &&
+			awsAccessKeyId.trim() !== '' &&
+			!/YOUR_.*_KEY_HERE/.test(awsAccessKeyId) &&
+			!awsAccessKeyId.includes('KEY_HERE') &&
+			awsSecretAccessKey &&
+			awsSecretAccessKey.trim() !== '' &&
+			!/YOUR_.*_KEY_HERE/.test(awsSecretAccessKey) &&
+			!awsSecretAccessKey.includes('KEY_HERE')
+		);
+	}
 
 	const keyMap = {
 		openai: 'OPENAI_API_KEY',
@@ -532,6 +550,7 @@ function isApiKeySet(providerName, session = null, projectRoot = null) {
 		openrouter: 'OPENROUTER_API_KEY',
 		xai: 'XAI_API_KEY',
 		vertex: 'GOOGLE_API_KEY' // Vertex uses the same key as Google
+		// Note: bedrock is handled above as a special case
 		// Add other providers as needed
 	};
 
@@ -627,6 +646,16 @@ function getMcpApiKeyStatus(providerName, projectRoot = null) {
 				apiKeyToCheck = mcpEnv.GOOGLE_API_KEY; // Vertex uses Google API key
 				placeholderValue = 'YOUR_GOOGLE_API_KEY_HERE';
 				break;
+			case 'bedrock':
+				// Bedrock requires AWS credentials, not a single API key
+				const awsAccessKeyId = mcpEnv.AWS_ACCESS_KEY_ID;
+				const awsSecretAccessKey = mcpEnv.AWS_SECRET_ACCESS_KEY;
+				return (
+					!!awsAccessKeyId && 
+					!awsAccessKeyId.includes('KEY_HERE') &&
+					!!awsSecretAccessKey && 
+					!awsSecretAccessKey.includes('KEY_HERE')
+				);
 			default:
 				return false; // Unknown provider
 		}

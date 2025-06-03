@@ -423,5 +423,47 @@
 			"allowed_roles": ["main", "fallback"],
 			"max_tokens": 32768
 		}
+	],
+	"bedrock": [
+		{
+			"id": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+			"swe_score": 0.727,
+			"cost_per_1m_tokens": null,
+			"allowed_roles": ["main", "fallback"],
+			"max_tokens": 64000,
+			"description": "Claude Sonnet 4 via US inference profile (required for Bedrock)"
+		},
+		{
+			"id": "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+			"swe_score": 0.727,
+			"cost_per_1m_tokens": null,
+			"allowed_roles": ["main", "fallback"],
+			"max_tokens": 64000,
+			"description": "Claude Sonnet 4 via EU inference profile (required for Bedrock)"
+		},
+		{
+			"id": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
+			"swe_score": 0.727,
+			"cost_per_1m_tokens": null,
+			"allowed_roles": ["main", "fallback"],
+			"max_tokens": 64000,
+			"description": "Claude Sonnet 4 via APAC inference profile (required for Bedrock)"
+		},
+		{
+			"id": "us.anthropic.claude-opus-4-20250514-v1:0",
+			"swe_score": 0.725,
+			"cost_per_1m_tokens": null,
+			"allowed_roles": ["main", "fallback", "research"],
+			"max_tokens": 32000,
+			"description": "Claude Opus 4 via US inference profile (required for Bedrock)"
+		},
+		{
+			"id": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+			"swe_score": 0.623,
+			"cost_per_1m_tokens": null,
+			"allowed_roles": ["main", "fallback"],
+			"max_tokens": 120000,
+			"description": "Claude 3.7 Sonnet via US inference profile (required for Bedrock)"
+		}
 	]
 }

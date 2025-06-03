@@ -2,20 +2,20 @@
   "models": {
     "main": {
       "provider": "bedrock",
-      "modelId": "anthropic.claude-sonnet-4-20250514-v1:0",
-      "maxTokens": 50000,
+      "modelId": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+      "maxTokens": 65536,
       "temperature": 0.2
     },
     "research": {
       "provider": "bedrock",
-      "modelId": "anthropic.claude-opus-4-20250514-v1:0",
-      "maxTokens": 8700,
+      "modelId": "us.anthropic.claude-opus-4-20250514-v1:0",
+      "maxTokens": 32000,
       "temperature": 0.1
     },
     "fallback": {
       "provider": "bedrock",
-      "modelId": "anthropic.claude-3-7-sonnet-20250219-v1:0",
-      "maxTokens": 128000,
+      "modelId": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+      "maxTokens": 120000,
       "temperature": 0.2
     }
   },
