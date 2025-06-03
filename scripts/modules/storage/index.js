@@ -6,6 +6,7 @@
 
 import persistenceManager from '../persistence-manager.js';
 import LocalStorageProvider from './local-storage-provider.js';
+import MondayStorageProvider from './monday-storage-provider.js';
 import { log } from '../utils.js';
 
 /**
@@ -21,10 +22,13 @@ async function initializeStorage(config = {}) {
 		
 		log('debug', 'Local storage provider registered');
 
-		// TODO: Register other providers (Monday, hybrid) when implemented
-		// const mondayProvider = new MondayStorageProvider(config.monday || {});
-		// persistenceManager.registerProvider('monday', mondayProvider);
+		// Register Monday storage provider
+		const mondayProvider = new MondayStorageProvider(config.monday || {});
+		persistenceManager.registerProvider('monday', mondayProvider);
 		
+		log('debug', 'Monday storage provider registered');
+
+		// TODO: Register hybrid provider when implemented
 		// const hybridProvider = new HybridStorageProvider(config.hybrid || {});
 		// persistenceManager.registerProvider('hybrid', hybridProvider);
 
@@ -55,9 +59,19 @@ function createLocalProvider(config = {}) {
 	return new LocalStorageProvider(config);
 }
 
+/**
+ * Create a new Monday storage provider instance
+ * @param {Object} config - Configuration for the provider
+ * @returns {MondayStorageProvider} Monday storage provider instance
+ */
+function createMondayProvider(config = {}) {
+	return new MondayStorageProvider(config);
+}
+
 export {
 	initializeStorage,
 	getPersistenceManager,
 	createLocalProvider,
+	createMondayProvider,
 	persistenceManager as default
 }; 

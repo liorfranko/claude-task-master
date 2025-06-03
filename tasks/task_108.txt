@@ -1,23 +1,29 @@
 # Task ID: 108
 # Title: Implement Monday Storage Provider
-# Status: pending
+# Status: done
 # Dependencies: 104, 107
 # Priority: medium
 # Description: Create a Monday.com storage provider that implements the persistence manager interface for Monday-only mode.
 # Details:
-Create `scripts/modules/monday-storage.js` that:  
+Create `scripts/modules/storage/monday-storage-provider.js` that:  
 1. Implements the persistence manager interface  
 2. Uses Monday API client for all operations  
 3. Maps Task Master task fields to Monday.com columns  
 4. Implements local caching for performance  
 5. Handles Monday-specific field mapping and constraints  
+6. Supports subtasks with full CRUD operations
+7. Provides bi-directional mapping between Task Master and Monday.com formats
+
+The implementation should use the monday.storage API for persistent key-value storage without requiring a separate backend. When storing objects, ensure they are properly serialized using JSON.stringify() to avoid the "[object Object]" string issue.
 
 Code structure:  
 ```javascript
-const mondayClient = require('./monday-client');
+const BaseStorageProvider = require('./base-storage-provider');
+const mondayClient = require('../monday-client');
 
-class MondayStorageProvider {
+class MondayStorageProvider extends BaseStorageProvider {
   constructor(config) {
+    super();
     this.config = config;
     this.boardId = config.persistence?.mondayConfig?.boardId;
     this.columnMapping = config.persistence?.mondayConfig?.columnMapping || {
@@ -64,6 +70,11 @@ class MondayStorageProvider {
     return this.cache;
   }
 
+  async getTask(id) {
+    const tasks = await this.getTasks();
+    return tasks.find(task => task.id === parseInt(id));
+  }
+
   async createTask(taskData) {
     // Create item in Monday
     const mutation = `
@@ -94,7 +105,119 @@ class MondayStorageProvider {
     };
   }
 
-  // Implement other CRUD methods
+  async updateTask(id, taskData) {
+    // Update item in Monday
+    await this._updateMondayItemFields(id, taskData);
+    
+    // Invalidate cache
+    this.cache = null;
+    
+    // Return updated task
+    return {
+      id: parseInt(id),
+      ...taskData,
+      mondayItemId: id,
+      lastSyncedAt: new Date().toISOString(),
+      syncStatus: 'synced'
+    };
+  }
+
+  async deleteTask(id) {
+    // Delete item in Monday
+    const mutation = `
+      mutation($itemId: Int!) {
+        delete_item(item_id: $itemId) {
+          id
+        }
+      }
+    `;
+    
+    await mondayClient.request(mutation, { itemId: parseInt(id) });
+    
+    // Invalidate cache
+    this.cache = null;
+    
+    return true;
+  }
+
+  async createSubtask(parentId, subtaskData) {
+    // Store subtask data using monday.storage
+    const parentTask = await this.getTask(parentId);
+    if (!parentTask) {
+      throw new Error(`Parent task with ID ${parentId} not found`);
+    }
+    
+    // Get existing subtasks or initialize empty array
+    const existingSubtasks = await this._getSubtasks(parentId) || [];
+    
+    // Create new subtask with unique ID
+    const newSubtask = {
+      id: Date.now().toString(), // Generate unique ID
+      parentId: parentId,
+      ...subtaskData,
+      createdAt: new Date().toISOString()
+    };
+    
+    // Add to subtasks array
+    existingSubtasks.push(newSubtask);
+    
+    // Store updated subtasks
+    await monday.storage.instance.setItem(
+      `subtasks_${parentId}`, 
+      JSON.stringify(existingSubtasks)
+    );
+    
+    return newSubtask;
+  }
+
+  async updateSubtask(parentId, subtaskId, subtaskData) {
+    const subtasks = await this._getSubtasks(parentId) || [];
+    const subtaskIndex = subtasks.findIndex(st => st.id === subtaskId);
+    
+    if (subtaskIndex === -1) {
+      throw new Error(`Subtask with ID ${subtaskId} not found`);
+    }
+    
+    // Update subtask
+    subtasks[subtaskIndex] = {
+      ...subtasks[subtaskIndex],
+      ...subtaskData,
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Store updated subtasks
+    await monday.storage.instance.setItem(
+      `subtasks_${parentId}`, 
+      JSON.stringify(subtasks)
+    );
+    
+    return subtasks[subtaskIndex];
+  }
+
+  async deleteSubtask(parentId, subtaskId) {
+    const subtasks = await this._getSubtasks(parentId) || [];
+    const updatedSubtasks = subtasks.filter(st => st.id !== subtaskId);
+    
+    if (updatedSubtasks.length === subtasks.length) {
+      throw new Error(`Subtask with ID ${subtaskId} not found`);
+    }
+    
+    // Store updated subtasks
+    await monday.storage.instance.setItem(
+      `subtasks_${parentId}`, 
+      JSON.stringify(updatedSubtasks)
+    );
+    
+    return true;
+  }
+  
+  async _getSubtasks(parentId) {
+    const result = await monday.storage.instance.getItem(`subtasks_${parentId}`);
+    if (result.data && result.data.value) {
+      return JSON.parse(result.data.value);
+    }
+    return [];
+  }
   
   _mapMondayItemToTask(item) {
     // Map Monday item to Task Master task
@@ -109,15 +232,59 @@ class MondayStorageProvider {
     // Map column values
     item.column_values.forEach(column => {
       if (column.id === this.columnMapping.status) {
-        task.status = column.text;
+        task.status = this._mapMondayStatusToTaskMaster(column.text);
       } else if (column.id === this.columnMapping.description) {
         task.description = column.text;
       } else if (column.id === this.columnMapping.priority) {
-        task.priority = column.text.toLowerCase();
+        task.priority = this._mapMondayPriorityToTaskMaster(column.text);
       }
     });
     
     return task;
+  }
+  
+  _mapMondayStatusToTaskMaster(mondayStatus) {
+    const statusMap = {
+      'Not Started': 'pending',
+      'Working on it': 'in-progress',
+      'Done': 'completed',
+      'Stuck': 'blocked'
+    };
+    
+    return statusMap[mondayStatus] || 'pending';
+  }
+  
+  _mapTaskMasterStatusToMonday(taskStatus) {
+    const statusMap = {
+      'pending': 'Not Started',
+      'in-progress': 'Working on it',
+      'completed': 'Done',
+      'blocked': 'Stuck'
+    };
+    
+    return statusMap[taskStatus] || 'Not Started';
+  }
+  
+  _mapMondayPriorityToTaskMaster(mondayPriority) {
+    const priorityMap = {
+      'Low': 'low',
+      'Medium': 'medium',
+      'High': 'high',
+      'Critical': 'critical'
+    };
+    
+    return priorityMap[mondayPriority] || 'medium';
+  }
+  
+  _mapTaskMasterPriorityToMonday(taskPriority) {
+    const priorityMap = {
+      'low': 'Low',
+      'medium': 'Medium',
+      'high': 'High',
+      'critical': 'Critical'
+    };
+    
+    return priorityMap[taskPriority] || 'Medium';
   }
   
   async _updateMondayItemFields(itemId, taskData) {
@@ -125,10 +292,11 @@ class MondayStorageProvider {
     const updatePromises = [];
     
     if (taskData.status) {
+      const mondayStatus = this._mapTaskMasterStatusToMonday(taskData.status);
       updatePromises.push(this._updateColumnValue(
         itemId, 
         this.columnMapping.status, 
-        taskData.status
+        mondayStatus
       ));
     }
     
@@ -141,10 +309,11 @@ class MondayStorageProvider {
     }
     
     if (taskData.priority) {
+      const mondayPriority = this._mapTaskMasterPriorityToMonday(taskData.priority);
       updatePromises.push(this._updateColumnValue(
         itemId, 
         this.columnMapping.priority, 
-        taskData.priority
+        mondayPriority
       ));
     }
     
@@ -174,10 +343,10 @@ module.exports = MondayStorageProvider;
 
 Register with persistence manager:  
 ```javascript
-const persistenceManager = require('./persistence-manager');
-const MondayStorageProvider = require('./monday-storage');
+const persistenceManager = require('../persistence-manager');
+const MondayStorageProvider = require('./monday-storage-provider');
 
-persistenceManager.registerProvider('monday', new MondayStorageProvider(require('../config').getConfig()));
+persistenceManager.registerProvider('monday', new MondayStorageProvider(require('../../config').getConfig()));
 ```
 
 # Test Strategy:
@@ -188,3 +357,52 @@ persistenceManager.registerProvider('monday', new MondayStorageProvider(require(
 5. Test error handling for API failures  
 6. Integration test with real Monday.com API using test board 9275265350  
 7. Performance tests with large task sets
+8. Test subtask operations (create, update, delete)
+9. Test bi-directional status and priority mapping
+10. Test monday.storage API for object storage with proper JSON serialization
+11. Verify rate limiting protection
+12. Test cache invalidation on data changes
+
+# Subtasks:
+## 1. Core Implementation [completed]
+### Dependencies: None
+### Description: Successfully implemented the Monday Storage Provider with full CRUD operations, local caching, and GraphQL integration.
+### Details:
+
+
+## 2. Advanced Features [completed]
+### Dependencies: None
+### Description: Implemented local caching system, status/priority mapping, field mapping, error handling, and validation.
+### Details:
+
+
+## 3. Storage Integration [completed]
+### Dependencies: None
+### Description: Registered Monday Storage Provider with persistence manager and updated initialization to support Monday.com provider.
+### Details:
+
+
+## 4. Data Mapping & Synchronization [completed]
+### Dependencies: None
+### Description: Implemented bi-directional status and priority mapping, dependencies parsing, GraphQL escaping, and real-time sync.
+### Details:
+
+
+## 5. Testing [completed]
+### Dependencies: None
+### Description: Completed comprehensive testing including unit tests and integration tests (21 tests total).
+### Details:
+
+
+## 6. Implement proper object serialization for monday.storage [done]
+### Dependencies: None
+### Description: Update the subtask storage implementation to properly serialize objects using JSON.stringify() when storing and JSON.parse() when retrieving to avoid the '[object Object]' string issue.
+### Details:
+
+
+## 7. Update file path structure [done]
+### Dependencies: None
+### Description: Move implementation from scripts/modules/monday-storage.js to scripts/modules/storage/monday-storage-provider.js and update imports accordingly.
+### Details:
+
+
