@@ -7,7 +7,7 @@ import {
   markSubtaskForSync,
   getTasksNeedingSync 
 } from './task-manager/monday-sync-utils.js';
-import { LocalStorageProvider } from './storage/local-storage-provider.js';
+import LocalStorageProvider from './storage/local-storage-provider.js';
 import { readJSON, writeJSON } from './utils.js';
 import path from 'path';
 
