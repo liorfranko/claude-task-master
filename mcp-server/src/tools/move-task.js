@@ -10,7 +10,7 @@ import {
 	withNormalizedProjectRoot
 } from './utils.js';
 import { moveTaskDirect } from '../core/task-master-core.js';
-import { findTasksJsonPath } from '../core/utils/path-utils.js';
+import { findTasksPath } from '../core/utils/path-utils.js';
 
 /**
  * Register the moveTask tool with the MCP server
@@ -34,7 +34,6 @@ export function registerMoveTaskTool(server) {
 			file: z.string().optional().describe('Custom path to tasks.json file'),
 			projectRoot: z
 				.string()
-				.optional()
 				.describe(
 					'Root directory of the project (typically derived from session)'
 				)
@@ -45,7 +44,7 @@ export function registerMoveTaskTool(server) {
 				let tasksJsonPath = args.file;
 
 				if (!tasksJsonPath) {
-					tasksJsonPath = findTasksJsonPath(args, log);
+					tasksJsonPath = findTasksPath(args, log);
 				}
 
 				// Parse comma-separated IDs
@@ -95,13 +94,16 @@ export function registerMoveTaskTool(server) {
 						}
 					}
 
-					return {
-						success: true,
-						data: {
-							moves: results,
-							message: `Successfully moved ${results.length} tasks`
-						}
-					};
+					return handleApiResult(
+						{
+							success: true,
+							data: {
+								moves: results,
+								message: `Successfully moved ${results.length} tasks`
+							}
+						},
+						log
+					);
 				} else {
 					// Moving a single task
 					return handleApiResult(
