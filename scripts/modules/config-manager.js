@@ -64,7 +64,13 @@ const DEFAULTS = {
 		ollamaBaseUrl: 'http://localhost:11434/api'
 	},
 	persistence: {
-		mode: 'local' // 'local', 'monday', or 'hybrid'
+		mode: 'local', // 'local', 'monday', or 'hybrid'
+		hybridConfig: {
+			primaryProvider: 'local',        // Which provider to use as primary for reads ('local' or 'monday')
+			conflictResolution: 'manual',    // 'manual', 'local-wins', 'monday-wins', 'newest-wins'
+			autoSync: false,                 // Whether to auto-sync in background
+			syncOnWrite: true                // Whether to sync after write operations
+		}
 	},
 	mondayIntegration: {
 		boardId: null, // Required for Monday.com functionality
@@ -78,10 +84,6 @@ const DEFAULTS = {
 			priority: 'task_priority',
 			testStrategy: 'test_strategy',
 			dependencies: 'task_dependencies'
-		},
-		syncSettings: {
-			conflictResolution: 'manual', // 'manual', 'local-wins', or 'monday-wins'
-			autoSync: false
 		}
 	}
 };
@@ -144,7 +146,11 @@ function _loadAndValidateConfig(explicitRoot = null) {
 				},
 				global: { ...defaults.global, ...parsedConfig?.global },
 				persistence: {
-					mode: parsedConfig?.persistence?.mode || defaults.persistence.mode
+					mode: parsedConfig?.persistence?.mode || defaults.persistence.mode,
+					hybridConfig: {
+						...defaults.persistence.hybridConfig,
+						...parsedConfig?.persistence?.hybridConfig
+					}
 				},
 				mondayIntegration: {
 					boardId: parsedConfig?.mondayIntegration?.boardId || defaults.mondayIntegration.boardId,
@@ -152,10 +158,6 @@ function _loadAndValidateConfig(explicitRoot = null) {
 					columnMapping: {
 						...defaults.mondayIntegration.columnMapping,
 						...parsedConfig?.mondayIntegration?.columnMapping
-					},
-					syncSettings: {
-						...defaults.mondayIntegration.syncSettings,
-						...parsedConfig?.mondayIntegration?.syncSettings
 					}
 				}
 			};
@@ -800,16 +802,6 @@ function getMondayColumnMapping(explicitRoot = null) {
 }
 
 /**
- * Gets the Monday.com sync settings configuration
- * @param {string|null} explicitRoot - Optional explicit path to the project root
- * @returns {object} Sync settings configuration
- */
-function getMondaySyncSettings(explicitRoot = null) {
-	const mondayConfig = getMondayIntegrationConfig(explicitRoot);
-	return mondayConfig.syncSettings || DEFAULTS.mondayIntegration.syncSettings;
-}
-
-/**
  * Validates the Monday.com configuration with optional board information fetching
  * @param {string|null} explicitRoot - Optional explicit path to the project root
  * @param {object} session - Session object for MCP context
@@ -918,13 +910,6 @@ function updateMondayConfig(updates, explicitRoot = null) {
 		};
 	}
 	
-	if (updates.syncSettings) {
-		config.mondayIntegration.syncSettings = {
-			...config.mondayIntegration.syncSettings,
-			...updates.syncSettings
-		};
-	}
-	
 	return writeConfig(config, explicitRoot);
 }
 
@@ -1002,16 +987,6 @@ function getPersistenceMondayColumnMapping(explicitRoot = null) {
 }
 
 /**
- * Get persistence Monday.com sync settings
- * @param {string|null} explicitRoot - Optional explicit path to the project root
- * @returns {object} Monday.com sync settings
- */
-function getPersistenceMondaySyncSettings(explicitRoot = null) {
-	const config = getConfig(explicitRoot);
-	return config.mondayIntegration?.syncSettings || {};
-}
-
-/**
  * Sets the persistence mode in the configuration
  * @param {string} mode - The persistence mode to set ('local', 'monday', or 'hybrid')
  * @param {string|null} explicitRoot - Optional explicit path to the project root
@@ -1060,7 +1035,7 @@ function updatePersistenceConfig(updates, explicitRoot = null) {
 	
 	// Handle Monday.com configuration updates
 	if (updates.mondayConfig || updates.boardId !== undefined || updates.apiToken !== undefined || 
-	    updates.columnMapping || updates.syncSettings) {
+	    updates.columnMapping) {
 		
 		if (updates.boardId !== undefined) {
 			config.mondayIntegration.boardId = updates.boardId;
@@ -1077,13 +1052,6 @@ function updatePersistenceConfig(updates, explicitRoot = null) {
 			};
 		}
 		
-		if (updates.syncSettings) {
-			config.mondayIntegration.syncSettings = {
-				...config.mondayIntegration.syncSettings,
-				...updates.syncSettings
-			};
-		}
-		
 		// Handle legacy mondayConfig updates
 		if (updates.mondayConfig) {
 			if (updates.mondayConfig.boardId !== undefined) {
@@ -1096,12 +1064,6 @@ function updatePersistenceConfig(updates, explicitRoot = null) {
 				config.mondayIntegration.columnMapping = {
 					...config.mondayIntegration.columnMapping,
 					...updates.mondayConfig.columnMapping
-				};
-			}
-			if (updates.mondayConfig.syncSettings) {
-				config.mondayIntegration.syncSettings = {
-					...config.mondayIntegration.syncSettings,
-					...updates.mondayConfig.syncSettings
 				};
 			}
 		}
@@ -1162,17 +1124,6 @@ async function validatePersistenceConfig(explicitRoot = null, session = null) {
 			result.isValid = false;
 			result.issues.push('Monday.com column mapping is required but missing');
 		}
-		
-		// Validate sync settings
-		if (mondayConfig.syncSettings) {
-			const { conflictResolution } = mondayConfig.syncSettings;
-			const validResolutions = ['manual', 'local-wins', 'monday-wins'];
-			
-			if (conflictResolution && !validResolutions.includes(conflictResolution)) {
-				result.isValid = false;
-				result.issues.push(`Invalid conflict resolution: ${conflictResolution}. Must be one of: ${validResolutions.join(', ')}`);
-			}
-		}
 	}
 	
 	return result;
@@ -1201,6 +1152,82 @@ function migrateMondayIntegrationToPersistence(explicitRoot = null) {
 	
 	// No migration needed if both sections exist with proper structure
 	return false;
+}
+
+/**
+ * Get hybrid configuration for persistence
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {Object} Hybrid configuration object
+ */
+function getHybridConfig(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config?.persistence?.hybridConfig || DEFAULTS.persistence.hybridConfig;
+}
+
+/**
+ * Get hybrid primary provider setting
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {string} Primary provider ('local' or 'monday')
+ */
+function getHybridPrimaryProvider(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.primaryProvider || DEFAULTS.persistence.hybridConfig.primaryProvider;
+}
+
+/**
+ * Get hybrid conflict resolution strategy
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {string} Conflict resolution strategy
+ */
+function getHybridConflictResolution(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.conflictResolution || DEFAULTS.persistence.hybridConfig.conflictResolution;
+}
+
+/**
+ * Get hybrid auto-sync setting
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {boolean} Whether auto-sync is enabled
+ */
+function getHybridAutoSync(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.autoSync !== undefined ? hybridConfig.autoSync : DEFAULTS.persistence.hybridConfig.autoSync;
+}
+
+/**
+ * Get hybrid sync-on-write setting
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ * @returns {boolean} Whether to sync after write operations
+ */
+function getHybridSyncOnWrite(explicitRoot = null) {
+	const hybridConfig = getHybridConfig(explicitRoot);
+	return hybridConfig.syncOnWrite !== undefined ? hybridConfig.syncOnWrite : DEFAULTS.persistence.hybridConfig.syncOnWrite;
+}
+
+/**
+ * Update hybrid configuration settings
+ * @param {Object} updates - Object containing updates to apply
+ * @param {string|null} explicitRoot - Optional explicit project root path
+ */
+function updateHybridConfig(updates, explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	
+	// Ensure persistence.hybridConfig exists
+	if (!config.persistence) {
+		config.persistence = { ...DEFAULTS.persistence };
+	}
+	if (!config.persistence.hybridConfig) {
+		config.persistence.hybridConfig = { ...DEFAULTS.persistence.hybridConfig };
+	}
+	
+	// Apply updates
+	config.persistence.hybridConfig = {
+		...config.persistence.hybridConfig,
+		...updates
+	};
+	
+	// Write updated config
+	writeConfig(config, explicitRoot);
 }
 
 export {
@@ -1254,7 +1281,6 @@ export {
 	getMondayBoardId,
 	getMondayApiToken,
 	getMondayColumnMapping,
-	getMondaySyncSettings,
 	validateMondayConfigWithBoardInfo,
 	updateMondayConfig,
 
@@ -1265,9 +1291,16 @@ export {
 	getPersistenceMondayApiToken,
 	getPersistenceMondayBoardId,
 	getPersistenceMondayColumnMapping,
-	getPersistenceMondaySyncSettings,
 	setPersistenceMode,
 	updatePersistenceConfig,
 	validatePersistenceConfig,
-	migrateMondayIntegrationToPersistence
+	migrateMondayIntegrationToPersistence,
+
+	// Hybrid configuration functions
+	getHybridConfig,
+	getHybridPrimaryProvider,
+	getHybridConflictResolution,
+	getHybridAutoSync,
+	getHybridSyncOnWrite,
+	updateHybridConfig
 };
