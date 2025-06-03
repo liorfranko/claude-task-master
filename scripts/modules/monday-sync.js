@@ -43,24 +43,23 @@ export class MondaySyncEngine {
    */
   constructor(projectRoot, session = null) {
     this.projectRoot = projectRoot;
-    this.session = session;
     
-    // Get configuration
     const config = getMondayIntegrationConfig(projectRoot, session);
+    
     if (!config || !config.boardId) {
       throw new Error('Monday.com integration not configured. Please run "task-master config-monday" first.');
     }
-
-    // Get API token
-    const token = getMondayApiToken(projectRoot, session);
-    if (!token) {
-      throw new Error('Monday API token not found in config or environment variables. Please set MONDAY_API_TOKEN or configure via "task-master config-monday --token=YOUR_TOKEN"');
+    
+    const apiToken = getMondayApiToken(projectRoot, session);
+    if (!apiToken) {
+      throw new Error('Monday API token not found in config or environment variables');
     }
-
-    this.config = config;
-    this.client = new MondayClient(token);
+    
     this.boardId = config.boardId;
-    this.columnMapping = config.columnMapping;
+    this.columnMapping = config.columnMapping || {};
+    this.syncSettings = config.syncSettings || {};
+    this.client = new MondayClient(apiToken);
+    this.session = session;
   }
 
   /**
@@ -243,7 +242,7 @@ export class MondaySyncEngine {
     }
 
     // Update priority (requires change_column_value for dropdown columns)
-    if (this.columnMapping.priority && this.columnMapping.priority !== 'task_priority' && task.priority) {
+    if (this.columnMapping.priority && task.priority) {
       const priorityValue = task.priority.charAt(0).toUpperCase() + task.priority.slice(1);
       
       try {

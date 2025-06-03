@@ -90,6 +90,8 @@ import {
 } from './ui.js';
 
 import { MondayClient } from './monday-client.js';
+import { createMondaySyncEngine } from './monday-sync.js';
+import { getTasksNeedingSync } from './task-manager/monday-sync-utils.js';
 import { initializeProject } from '../init.js';
 import {
 	getModelConfiguration,
@@ -3096,7 +3098,7 @@ Examples:
 	programInstance
 		.command('sync-monday')
 		.description('Sync all tasks to Monday.com board')
-		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('-f, --file <file>', 'Path to the tasks file', TASKMASTER_TASKS_FILE)
 		.option('--task-id <id>', 'Sync only a specific task by ID')
 		.option('--dry-run', 'Show what would be synced without making changes')
 		.option('--force', 'Clear all sync data and resync all tasks from scratch')
@@ -3325,7 +3327,7 @@ Examples:
 	programInstance
 		.command('monday-status')
 		.description('Show Monday.com sync status')
-		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('-f, --file <file>', 'Path to the tasks file', TASKMASTER_TASKS_FILE)
 		.option('--verbose', 'Show detailed status information')
 		.action(async (options) => {
 			try {
@@ -3489,7 +3491,7 @@ Examples:
 	programInstance
 		.command('init-monday-sync')
 		.description('Initialize all local tasks with Monday.com sync fields (sets syncStatus to pending)')
-		.option('-f, --file <file>', 'Path to the tasks file', 'tasks/tasks.json')
+		.option('-f, --file <file>', 'Path to the tasks file', TASKMASTER_TASKS_FILE)
 		.option('-y, --yes', 'Skip confirmation prompt')
 		.action(async (options) => {
 			try {
