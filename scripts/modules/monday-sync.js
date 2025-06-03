@@ -243,7 +243,7 @@ export class MondaySyncEngine {
     }
 
     // Update priority (requires change_column_value for dropdown columns)
-    if (this.columnMapping.priority && task.priority) {
+    if (this.columnMapping.priority && this.columnMapping.priority !== 'task_priority' && task.priority) {
       const priorityValue = task.priority.charAt(0).toUpperCase() + task.priority.slice(1);
       
       try {

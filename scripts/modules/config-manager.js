@@ -61,8 +61,8 @@ const DEFAULTS = {
 		defaultSubtasks: 5,
 		defaultPriority: 'medium',
 		projectName: 'Task Master',
-		ollamaBaseUrl: 'http://localhost:11434/api',
-		bedrockBaseUrl: 'https://bedrock.us-east-1.amazonaws.com'
+		ollamaBaseURL: 'http://localhost:11434/api',
+		bedrockBaseURL: 'https://bedrock.us-east-1.amazonaws.com'
 	},
 	persistence: {
 		mode: 'local', // 'local', 'monday', or 'hybrid'
@@ -1311,7 +1311,6 @@ export {
 	getMcpApiKeyStatus,
 	// ADD: Function to get all provider names
 	getAllProviders,
-<<<<<<< HEAD
 
 	// Monday.com integration functions
 	getMondayIntegrationConfig,
@@ -1339,9 +1338,7 @@ export {
 	getHybridConflictResolution,
 	getHybridAutoSync,
 	getHybridSyncOnWrite,
-	updateHybridConfig
-=======
+	updateHybridConfig,
 	getVertexProjectId,
 	getVertexLocation
->>>>>>> eyaltoledano-main
 };

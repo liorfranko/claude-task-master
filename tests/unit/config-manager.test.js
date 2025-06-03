@@ -139,11 +139,17 @@ const DEFAULT_CONFIG = {
 		defaultSubtasks: 5,
 		defaultPriority: 'medium',
 		projectName: 'Task Master',
-<<<<<<< HEAD
-		ollamaBaseUrl: 'http://localhost:11434/api'
+		ollamaBaseURL: 'http://localhost:11434/api',
+		bedrockBaseURL: 'https://bedrock.us-east-1.amazonaws.com'
 	},
 	persistence: {
-		mode: 'local'
+		mode: 'local',
+		hybridConfig: {
+			primaryProvider: 'local',
+			conflictResolution: 'manual',
+			autoSync: false,
+			syncOnWrite: true
+		}
 	},
 	mondayIntegration: {
 		boardId: null,
@@ -157,15 +163,7 @@ const DEFAULT_CONFIG = {
 			priority: 'task_priority',
 			testStrategy: 'test_strategy',
 			dependencies: 'task_dependencies'
-		},
-		syncSettings: {
-			conflictResolution: 'manual',
-			autoSync: false
 		}
-=======
-		ollamaBaseURL: 'http://localhost:11434/api',
-		bedrockBaseURL: 'https://bedrock.us-east-1.amazonaws.com'
->>>>>>> eyaltoledano-main
 	}
 };
 
