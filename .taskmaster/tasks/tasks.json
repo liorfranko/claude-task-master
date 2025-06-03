@@ -6845,6 +6845,43 @@
       "lastSyncedAt": null,
       "syncStatus": "pending",
       "syncError": null
+    },
+    {
+      "id": 146,
+      "title": "Verify AI Task Generation System with Standard Test Input",
+      "description": "Create and execute a standardized test to verify that the AI task generation system is working correctly by using a predefined test input and validating the output format and content.",
+      "details": "1. Prepare a standardized test input:\n   - Use the exact phrase \"Test task to verify AI is working correctly\" as the input prompt\n   - Document the expected output structure (JSON with title, description, details, testStrategy, and dependencies fields)\n   - Define acceptance criteria for a successful test:\n     * Output must be valid JSON\n     * All required fields must be present\n     * Content must be relevant to the input prompt\n     * Dependencies must be logically structured\n\n2. Execute the test:\n   - Run the AI task generation command with the standardized test input\n   - Capture the complete response including any error messages\n   - Save the output to a test results file with timestamp\n\n3. Validate the results:\n   - Parse the JSON output to verify structural integrity\n   - Check that all required fields are present and properly formatted\n   - Verify the content is coherent and relevant to the test prompt\n   - Ensure dependencies are appropriate based on the task context\n   - Compare against previous test results if available\n\n4. Document the test results:\n   - Create a test report with pass/fail status\n   - Include any anomalies or unexpected behavior\n   - Document response time and any performance metrics\n   - Store the report in the project's test documentation\n\n5. Implement as a repeatable test:\n   - Create a script that can run this test automatically\n   - Add the test to the project's test suite for regression testing\n   - Ensure the test can be run as part of CI/CD processes",
+      "testStrategy": "1. Manual Verification:\n   - Execute the AI task generation command with the exact input \"Test task to verify AI is working correctly\"\n   - Manually inspect the output JSON to verify:\n     * All required fields are present (title, description, details, testStrategy, dependencies)\n     * Content is coherent and relevant to the test prompt\n     * Dependencies are logically structured\n   - Document any issues or anomalies\n\n2. Automated Testing:\n   - Run the automated test script that executes the standardized test\n   - Verify the script correctly identifies whether the output meets all requirements\n   - Check that the test results are properly logged and stored\n\n3. Regression Testing:\n   - Compare the current test results with previous results\n   - Verify that any previously identified issues have been resolved\n   - Ensure no new issues have been introduced\n\n4. Edge Case Testing:\n   - Test the system's response to variations of the standard input\n   - Verify the system handles minor modifications gracefully\n   - Document how the AI adapts to different phrasings of the same request\n\n5. Integration Verification:\n   - Confirm the generated task can be properly added to the tasks.json file\n   - Verify the task appears correctly in task listings and reports\n   - Ensure the task can be manipulated with standard task operations (update, delete, etc.)\n\nThe test is considered successful when:\n1. The AI generates a properly formatted JSON response\n2. All required fields contain relevant and coherent content\n3. The task can be integrated into the task management system\n4. The test can be repeated with consistent results",
+      "status": "pending",
+      "dependencies": [
+        139,
+        140
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
+    },
+    {
+      "id": 147,
+      "title": "Verify AI Task Generation System with Standardized Test Case",
+      "description": "Create and execute a standardized test case to verify that the AI task generation system is working correctly and producing properly formatted task outputs.",
+      "details": "1. Design a standardized test case with the following components:\n   - Use the exact prompt \"Test task to verify AI is working correctly\" as input\n   - Document the expected output structure (JSON with title, description, details, testStrategy, and dependencies)\n   - Define acceptance criteria for a successful test (proper JSON structure, reasonable content in each field, appropriate dependencies)\n\n2. Execute the test case:\n   - Run the AI task generation command with the standardized test input\n   - Capture the complete output including any logs or error messages\n   - Save the generated task JSON for analysis\n\n3. Validate the results:\n   - Verify the output is valid JSON and matches the expected schema\n   - Check that all required fields are present and properly formatted\n   - Ensure the content is coherent and relevant to the test prompt\n   - Validate that dependencies are appropriate and reference existing tasks\n   - Compare against previous test results if available to identify any changes in behavior\n\n4. Document the test results:\n   - Create a test report with timestamp, input, output, and validation results\n   - Note any discrepancies or issues found during testing\n   - Add screenshots or logs as needed for documentation\n   - Store the test results in a designated location for future reference\n\n5. Implement automated verification:\n   - Create a script that can automatically run this test and validate results\n   - Include validation checks for all required fields and format requirements\n   - Add the script to the project's test suite for regular execution",
+      "testStrategy": "1. Manual Test Execution:\n   - Execute the AI task generation command with the exact prompt \"Test task to verify AI is working correctly\"\n   - Verify the command completes without errors\n   - Confirm the output is valid JSON with all required fields\n   - Check that the content is coherent and relevant to the test prompt\n   - Validate that any dependencies listed are appropriate\n\n2. Schema Validation:\n   - Parse the output JSON and validate against the task schema\n   - Verify all required fields are present: title, description, details, testStrategy\n   - Check that dependencies are provided as an array of numbers\n   - Ensure no extraneous fields are included\n\n3. Content Quality Assessment:\n   - Review the title for clarity and conciseness\n   - Verify the description accurately summarizes the task in 1-2 sentences\n   - Confirm the details section provides comprehensive implementation guidance\n   - Check that the testStrategy includes specific verification steps\n   - Ensure dependencies are logically connected to the task\n\n4. Automated Testing:\n   - Run the automated test script that executes the standardized test\n   - Verify the script correctly identifies valid/invalid outputs\n   - Confirm test results are properly logged and reported\n\n5. Regression Testing:\n   - Compare results with previous test runs to identify any changes in AI behavior\n   - Document any differences in output format or content quality",
+      "status": "pending",
+      "dependencies": [
+        139,
+        140,
+        145
+      ],
+      "priority": "medium",
+      "subtasks": [],
+      "mondayItemId": null,
+      "lastSyncedAt": null,
+      "syncStatus": "pending",
+      "syncError": null
     }
   ]
 }

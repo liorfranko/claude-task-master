@@ -426,6 +426,14 @@
 	],
 	"bedrock": [
 		{
+			"id": "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+			"swe_score": 0.49,
+			"cost_per_1m_tokens": null,
+			"allowed_roles": ["main", "fallback"],
+			"max_tokens": 64000,
+			"description": "Claude 3.5 Sonnet via US inference profile (required for Bedrock)"
+		},
+		{
 			"id": "us.anthropic.claude-sonnet-4-20250514-v1:0",
 			"swe_score": 0.727,
 			"cost_per_1m_tokens": null,
