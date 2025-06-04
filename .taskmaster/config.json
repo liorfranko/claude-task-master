@@ -1,8 +1,8 @@
 {
   "models": {
     "main": {
-      "provider": "bedrock",
-      "modelId": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+      "provider": "openai",
+      "modelId": "gpt-4o",
       "maxTokens": 65536,
       "temperature": 0.2
     },
@@ -13,8 +13,8 @@
       "temperature": 0.1
     },
     "fallback": {
-      "provider": "bedrock",
-      "modelId": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+      "provider": "anthropic",
+      "modelId": "claude-3-5-sonnet-20241022",
       "maxTokens": 120000,
       "temperature": 0.2
     }

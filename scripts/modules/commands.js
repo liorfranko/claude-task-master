@@ -92,7 +92,7 @@ import {
 
 import { MondayClient } from './monday-client.js';
 import { createMondaySyncEngine } from './monday-sync.js';
-import { getTasksNeedingSync } from './task-manager/monday-sync-utils.js';
+import { getTasksNeedingSync, initializeMondayFieldsForAllTasks } from './task-manager/monday-sync-utils.js';
 import { initializeProject } from '../init.js';
 import {
 	getModelConfiguration,
