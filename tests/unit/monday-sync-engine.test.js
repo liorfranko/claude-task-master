@@ -209,7 +209,7 @@ describe('MondaySyncEngine', () => {
 
     it('should handle update errors', async () => {
       const error = new Error('Update failed');
-      mockClientInstance._executeWithRateLimit.mockRejectedValueOnce(error);
+      mockClientInstance._executeWithRateLimit.mockRejectedValue(error);
 
       const result = await syncEngine.updateItem('12345', mockTask);
 
@@ -371,6 +371,37 @@ describe('MondaySyncEngine', () => {
       expect(result.error).toBe('Parent task (ID: 1) must be synced to Monday.com before its subtasks can be synced');
       expect(mockUpdateSubtaskSyncStatus).toHaveBeenCalledWith(
         tasksPath, subtaskId, null, 'error', 'Parent task (ID: 1) must be synced to Monday.com before its subtasks can be synced'
+      );
+    });
+
+    it('should handle Monday API errors during subtask creation', async () => {
+      const apiError = new Error('Monday API error: Invalid parent ID');
+      mockClientInstance._executeWithRateLimit
+        .mockRejectedValueOnce(apiError);
+
+      const result = await syncEngine.syncSubtask(mockSubtask, mockParentTask, tasksPath, subtaskId);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Monday API error: Invalid parent ID');
+      expect(mockUpdateSubtaskSyncStatus).toHaveBeenCalledWith(
+        tasksPath, subtaskId, null, 'error', 'Monday API error: Invalid parent ID'
+      );
+    });
+
+    it('should handle API errors during subtask field updates', async () => {
+      // Mock successful subitem creation but failed field update
+      mockClientInstance._executeWithRateLimit
+        .mockResolvedValueOnce({ create_subitem: { id: '12345' } })
+        .mockRejectedValueOnce(new Error('Field update failed'));
+
+      const result = await syncEngine.syncSubtask(mockSubtask, mockParentTask, tasksPath, subtaskId);
+
+      // The createSubitem method is designed to continue with success even if field updates fail
+      // because the primary operation (subitem creation) was successful
+      expect(result.success).toBe(true);
+      expect(result.mondayItemId).toBe('12345');
+      expect(mockUpdateSubtaskSyncStatus).toHaveBeenCalledWith(
+        tasksPath, subtaskId, '12345', 'synced'
       );
     });
   });
@@ -543,6 +574,124 @@ describe('MondaySyncEngine', () => {
       const session = { userId: 'test' };
       const engine = createMondaySyncEngine(projectRoot, session);
       expect(engine.session).toBe(session);
+    });
+  });
+
+  describe('createSubitem', () => {
+    const mockSubtask = {
+      title: 'Test Subitem',
+      description: 'Test subitem description',
+      status: 'pending',
+      details: 'Detailed implementation notes'
+    };
+    const parentMondayItemId = '11111';
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('should create new subitem with correct GraphQL mutation', async () => {
+      mockClientInstance._executeWithRateLimit
+        .mockResolvedValueOnce({ create_subitem: { id: '12345', board: { id: 'board123' } } })
+        .mockResolvedValue({}); // Mock field updates
+
+      const result = await syncEngine.createSubitem(mockSubtask, parentMondayItemId);
+
+      expect(result.success).toBe(true);
+      expect(result.mondayItemId).toBe('12345');
+      
+      const createCall = mockClientInstance._executeWithRateLimit.mock.calls[0][0];
+      expect(createCall).toContain('create_subitem');
+      expect(createCall).toContain(`parent_item_id: ${parentMondayItemId}`);
+      expect(createCall).toContain('Test Subitem');
+    });
+
+    it('should escape special characters in subitem title', async () => {
+      const subtaskWithSpecialChars = {
+        ...mockSubtask,
+        title: 'Test "quotes" & <html> chars'
+      };
+
+      mockClientInstance._executeWithRateLimit
+        .mockResolvedValueOnce({ create_subitem: { id: '12345', board: { id: 'board123' } } })
+        .mockResolvedValue({});
+
+      const result = await syncEngine.createSubitem(subtaskWithSpecialChars, parentMondayItemId);
+
+      expect(result.success).toBe(true);
+      
+      const createCall = mockClientInstance._executeWithRateLimit.mock.calls[0][0];
+      // Should contain properly escaped characters for GraphQL
+      expect(createCall).toContain('Test \\"quotes\\" & <html> chars');
+    });
+
+    it('should update subitem fields after creation', async () => {
+      mockClientInstance._executeWithRateLimit
+        .mockResolvedValueOnce({ create_subitem: { id: '12345', board: { id: 'board123' } } })
+        .mockResolvedValue({}); // Mock field updates
+
+      const result = await syncEngine.createSubitem(mockSubtask, parentMondayItemId);
+
+      expect(result.success).toBe(true);
+      
+      // The actual number of calls depends on which fields are mapped and present in the subtask
+      // Given our mockSubtask has: title, description, status, details
+      // And the sync engine's columnMapping could have: status, description, details, priority, testStrategy, taskId, dependencies
+      // We expect at least 2 calls: 1 for creation + at least 1 for field updates
+      expect(mockClientInstance._executeWithRateLimit).toHaveBeenCalledTimes(4); // create + status + description + details
+      
+      // Check that updateItemFields was called (through the resolved promises)
+      const calls = mockClientInstance._executeWithRateLimit.mock.calls;
+      expect(calls.length).toBeGreaterThan(1);
+    });
+
+    it('should handle Monday API errors during subitem creation', async () => {
+      const apiError = new Error('Invalid parent item ID');
+      mockClientInstance._executeWithRateLimit.mockRejectedValueOnce(apiError);
+
+      const result = await syncEngine.createSubitem(mockSubtask, parentMondayItemId);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid parent item ID');
+    });
+
+    it('should handle GraphQL response errors', async () => {
+      mockClientInstance._executeWithRateLimit
+        .mockResolvedValueOnce({ errors: [{ message: 'GraphQL error' }] });
+
+      const result = await syncEngine.createSubitem(mockSubtask, 'invalid-parent-id');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should create subitem with minimal required fields', async () => {
+      const minimalSubtask = {
+        title: 'Minimal Subitem'
+      };
+
+      mockClientInstance._executeWithRateLimit
+        .mockResolvedValueOnce({ create_subitem: { id: '12345', board: { id: 'board123' } } })
+        .mockResolvedValue({});
+
+      const result = await syncEngine.createSubitem(minimalSubtask, parentMondayItemId);
+
+      expect(result.success).toBe(true);
+      expect(result.mondayItemId).toBe('12345');
+      
+      const createCall = mockClientInstance._executeWithRateLimit.mock.calls[0][0];
+      expect(createCall).toContain('Minimal Subitem');
+    });
+
+    it('should handle network timeouts gracefully', async () => {
+      const timeoutError = new Error('Request timeout');
+      timeoutError.code = 'ETIMEDOUT';
+      mockClientInstance._executeWithRateLimit.mockRejectedValueOnce(timeoutError);
+
+      const result = await syncEngine.createSubitem(mockSubtask, parentMondayItemId);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Request timeout');
     });
   });
 }); 

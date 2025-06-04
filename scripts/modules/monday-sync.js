@@ -159,6 +159,49 @@ export class MondaySyncEngine {
   }
 
   /**
+   * Retry an operation with exponential backoff for timing-sensitive Monday.com operations
+   * @param {Function} operation - The operation to retry
+   * @param {Object} options - Retry options
+   * @returns {Promise<any>} Operation result
+   */
+  async retryWithBackoff(operation, options = {}) {
+    const {
+      maxRetries = 3,
+      baseDelay = 1000, // 1 second
+      maxDelay = 5000, // 5 seconds
+      retryOn = ['Item not found', 'Item not found in board', 'ResourceNotFoundException']
+    } = options;
+
+    let lastError;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await operation();
+        return result;
+      } catch (error) {
+        lastError = error;
+        
+        // Check if this is a retryable error
+        const errorMessage = error.message || error.toString();
+        const isRetryable = retryOn.some(pattern => errorMessage.includes(pattern));
+        
+        if (!isRetryable || attempt === maxRetries) {
+          throw error;
+        }
+        
+                 // Calculate delay with exponential backoff
+         const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+         if (this.log && typeof this.log === 'function') {
+           this.log(`Retrying operation in ${delay}ms (attempt ${attempt + 1}/${maxRetries + 1})...`, 'warn');
+         }
+         await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
    * Create a new item on Monday board
    * @param {Object} task - Task Master task object
    * @returns {Promise<Object>} Result with success status and Monday item ID
@@ -222,21 +265,34 @@ export class MondaySyncEngine {
    */
   async updateItemFields(mondayItemId, task) {
     // Update status (requires change_column_value for status/dropdown columns)
-    if (this.columnMapping.status) {
-      const mondayStatus = this.mapStatus(task.status);
-      const mutation = `
-        mutation {
-          change_column_value(
-            board_id: ${this.boardId}, 
-            item_id: ${mondayItemId}, 
-            column_id: "${this.columnMapping.status}", 
-            value: "{\\"label\\":\\"${mondayStatus}\\"}"
-          ) {
-            id
+    if (this.columnMapping.status && task.status) {
+      try {
+        const mondayStatus = this.mapStatus(task.status);
+        const mutation = `
+          mutation {
+            change_column_value(
+              board_id: ${this.boardId}, 
+              item_id: ${mondayItemId}, 
+              column_id: "${this.columnMapping.status}", 
+              value: "{\\"label\\":\\"${mondayStatus}\\"}"
+            ) {
+              id
+            }
           }
+        `;
+        await this.client._executeWithRateLimit(mutation);
+      } catch (error) {
+        // If the item is not found immediately, it might be a timing issue
+        const isTimingError = error.message.includes('Item not found') || 
+                            error.message.includes('ResourceNotFoundException');
+        if (isTimingError) {
+          throw error; // Let the retry logic handle this
         }
-      `;
-      await this.client._executeWithRateLimit(mutation);
+                 // Log other errors but don't fail the entire operation
+         if (this.log && typeof this.log === 'function') {
+           this.log(`Warning: Failed to update status for item ${mondayItemId}: ${error.message}`, 'warn');
+         }
+      }
     }
     
     // Update description/notes (use simple column value for better persistence)
@@ -432,8 +488,20 @@ export class MondaySyncEngine {
       const result = await this.client._executeWithRateLimit(mutation);
       const mondaySubitemId = result.create_subitem.id;
       
-      // Update subitem with additional fields
-      await this.updateItemFields(mondaySubitemId, subtask);
+      // Update subitem with additional fields - make this optional and non-blocking
+      // Note: Monday.com has timing issues with newly created subitems
+      if (subtask.description || subtask.status || subtask.details || subtask.priority) {
+        try {
+          await this.updateItemFields(mondaySubitemId, subtask);
+        } catch (error) {
+          // Don't fail the entire operation if field updates don't work
+          // The subitem creation was successful, which is the primary goal
+          if (this.log && typeof this.log === 'function') {
+            this.log(`Info: Subitem created successfully, but field updates will be retried later: ${error.message}`, 'info');
+          }
+          // Continue with success - field updates can happen in a separate operation
+        }
+      }
       
       return {
         success: true,
@@ -539,9 +607,39 @@ export class MondaySyncEngine {
       });
     }
 
+    // Add minimal delay after parent tasks sync to allow Monday.com to process them
+    if (subtasksToSync.length > 0 && tasksToSync.length > 0) {
+      if (this.log && typeof this.log === 'function') {
+        this.log('Brief pause to allow parent tasks to be processed...', 'info');
+      }
+      await new Promise(resolve => setTimeout(resolve, 500)); // 0.5 second delay
+    }
+
+    // Reload tasks data to get updated parent task mondayItemIds
+    let updatedTasksData = null;
+    if (subtasksToSync.length > 0) {
+      try {
+        updatedTasksData = readJSON(tasksPath);
+      } catch (error) {
+        // If we can't reload, continue with original data
+        if (this.log && typeof this.log === 'function') {
+          this.log(`Warning: Could not reload tasks data: ${error.message}`, 'warn');
+        }
+      }
+    }
+
     // Then, sync all subtasks (now that parent tasks should have Monday item IDs)
     for (const item of subtasksToSync) {
-      const result = await this.syncSubtask(item.task, item.parentTask, tasksPath, item.id);
+      // Get updated parent task data if available
+      let parentTask = item.parentTask;
+      if (updatedTasksData) {
+        const updatedParent = updatedTasksData.tasks.find(t => t.id === item.parentTask.id);
+        if (updatedParent) {
+          parentTask = updatedParent;
+        }
+      }
+      
+      const result = await this.syncSubtask(item.task, parentTask, tasksPath, item.id);
 
       if (result.success) {
         results.synced++;

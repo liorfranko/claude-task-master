@@ -270,6 +270,177 @@ describe('Monday Sync Utils', () => {
       expect(mockData.tasks[0].subtasks[0].lastSyncedAt).toBeDefined();
       expect(mockWriteJSON).toHaveBeenCalledWith('/path/tasks.json', mockData);
     });
+
+    test('should update subtask sync status with error', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            subtasks: [
+              { id: 1, title: 'Subtask 1', status: 'pending' }
+            ]
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+      mockWriteJSON.mockImplementation(() => {});
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', '1.1', null, 'error', 'API timeout');
+
+      expect(result).toBe(true);
+      expect(mockData.tasks[0].subtasks[0].mondayItemId).toBe(null);
+      expect(mockData.tasks[0].subtasks[0].syncStatus).toBe('error');
+      expect(mockData.tasks[0].subtasks[0].syncError).toBe('API timeout');
+      expect(mockData.tasks[0].subtasks[0].lastSyncedAt).toBeDefined();
+      expect(mockWriteJSON).toHaveBeenCalledWith('/path/tasks.json', mockData);
+    });
+
+    test('should return false if parent task not found', () => {
+      const mockData = {
+        tasks: [
+          { id: 2, title: 'Task 2', subtasks: [] }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', '1.1', 'monday456', 'synced');
+
+      expect(result).toBe(false);
+    });
+
+    test('should return false if subtask not found', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            subtasks: [
+              { id: 2, title: 'Subtask 2', status: 'pending' }
+            ]
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', '1.1', 'monday456', 'synced');
+
+      expect(result).toBe(false);
+    });
+
+    test('should return false if parent task has no subtasks array', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1'
+            // No subtasks array
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', '1.1', 'monday456', 'synced');
+
+      expect(result).toBe(false);
+    });
+
+    test('should handle malformed subtask ID gracefully', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            subtasks: [
+              { id: 1, title: 'Subtask 1', status: 'pending' }
+            ]
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', 'invalid-id', 'monday456', 'synced');
+
+      expect(result).toBe(false);
+    });
+
+    test('should preserve existing subtask fields when updating sync status', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            subtasks: [
+              { 
+                id: 1, 
+                title: 'Subtask 1', 
+                status: 'pending',
+                description: 'Existing description',
+                dependencies: ['2'],
+                customField: 'custom value'
+              }
+            ]
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+      mockWriteJSON.mockImplementation(() => {});
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', '1.1', 'monday456', 'synced');
+
+      expect(result).toBe(true);
+      const updatedSubtask = mockData.tasks[0].subtasks[0];
+      expect(updatedSubtask.description).toBe('Existing description');
+      expect(updatedSubtask.dependencies).toEqual(['2']);
+      expect(updatedSubtask.customField).toBe('custom value');
+      expect(updatedSubtask.mondayItemId).toBe('monday456');
+      expect(updatedSubtask.syncStatus).toBe('synced');
+    });
+
+    test('should handle write errors gracefully', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            subtasks: [
+              { id: 1, title: 'Subtask 1', status: 'pending' }
+            ]
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+      mockWriteJSON.mockImplementation(() => {
+        throw new Error('Write error');
+      });
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', '1.1', 'monday456', 'synced');
+
+      expect(result).toBe(false);
+      consoleSpy.mockRestore();
+    });
+
+    test('should handle read errors gracefully', () => {
+      mockReadJSON.mockImplementation(() => {
+        throw new Error('Read error');
+      });
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = mondaySyncUtils.updateSubtaskSyncStatus('/path/tasks.json', '1.1', 'monday456', 'synced');
+
+      expect(result).toBe(false);
+      consoleSpy.mockRestore();
+    });
   });
 
   describe('getTasksNeedingSync', () => {
@@ -358,6 +529,176 @@ describe('Monday Sync Utils', () => {
       };
 
       mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
+
+      expect(result).toEqual([]);
+    });
+
+    test('should handle tasks with mixed subtask sync statuses', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            syncStatus: 'synced', // Parent is synced
+            subtasks: [
+              { id: 1, title: 'Subtask 1', syncStatus: 'pending' },
+              { id: 2, title: 'Subtask 2', syncStatus: 'synced' },
+              { id: 3, title: 'Subtask 3', syncStatus: 'error' },
+              { id: 4, title: 'Subtask 4' } // No syncStatus
+            ]
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
+
+      expect(result).toHaveLength(2); // Only pending and error subtasks
+      expect(result[0]).toEqual({
+        type: 'subtask',
+        id: '1.1',
+        task: mockData.tasks[0].subtasks[0],
+        parentTask: mockData.tasks[0]
+      });
+      expect(result[1]).toEqual({
+        type: 'subtask',
+        id: '1.3',
+        task: mockData.tasks[0].subtasks[2],
+        parentTask: mockData.tasks[0]
+      });
+    });
+
+    test('should handle multiple tasks with subtasks needing sync', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            syncStatus: 'pending',
+            subtasks: [
+              { id: 1, title: 'Subtask 1.1', syncStatus: 'error' },
+              { id: 2, title: 'Subtask 1.2', syncStatus: 'synced' }
+            ]
+          },
+          {
+            id: 2,
+            title: 'Task 2',
+            syncStatus: 'synced',
+            subtasks: [
+              { id: 1, title: 'Subtask 2.1', syncStatus: 'pending' }
+            ]
+          },
+          {
+            id: 3,
+            title: 'Task 3',
+            syncStatus: 'error',
+            subtasks: [
+              { id: 1, title: 'Subtask 3.1', syncStatus: 'pending' },
+              { id: 2, title: 'Subtask 3.2', syncStatus: 'error' }
+            ]
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
+
+      expect(result).toHaveLength(6); // Task 1, Subtask 1.1, Subtask 2.1, Task 3, Subtask 3.1, Subtask 3.2
+      
+      // Check that tasks and subtasks are properly identified
+      const taskResults = result.filter(r => r.type === 'task');
+      const subtaskResults = result.filter(r => r.type === 'subtask');
+      
+      expect(taskResults).toHaveLength(2); // Task 1 and Task 3
+      expect(subtaskResults).toHaveLength(4); // All subtasks with pending/error status
+      
+      // Verify specific subtask IDs
+      const subtaskIds = subtaskResults.map(r => r.id);
+      expect(subtaskIds).toContain('1.1');
+      expect(subtaskIds).toContain('2.1');
+      expect(subtaskIds).toContain('3.1');
+      expect(subtaskIds).toContain('3.2');
+    });
+
+    test('should handle tasks with empty subtasks arrays', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            syncStatus: 'pending',
+            subtasks: []
+          },
+          {
+            id: 2,
+            title: 'Task 2',
+            syncStatus: 'error',
+            subtasks: []
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
+
+      expect(result).toHaveLength(2);
+      expect(result.every(r => r.type === 'task')).toBe(true);
+    });
+
+    test('should handle tasks without subtasks property', () => {
+      const mockData = {
+        tasks: [
+          {
+            id: 1,
+            title: 'Task 1',
+            syncStatus: 'pending'
+            // No subtasks property
+          },
+          {
+            id: 2,
+            title: 'Task 2',
+            syncStatus: 'error'
+            // No subtasks property
+          }
+        ]
+      };
+
+      mockReadJSON.mockReturnValue(mockData);
+
+      const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
+
+      expect(result).toHaveLength(2);
+      expect(result.every(r => r.type === 'task')).toBe(true);
+    });
+
+    test('should handle file read errors gracefully', () => {
+      mockReadJSON.mockImplementation(() => {
+        throw new Error('File read error');
+      });
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
+
+      expect(result).toEqual([]);
+      consoleSpy.mockRestore();
+    });
+
+    test('should handle invalid data format gracefully', () => {
+      mockReadJSON.mockReturnValue({ invalidFormat: true });
+
+      const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
+
+      expect(result).toEqual([]);
+    });
+
+    test('should handle null data gracefully', () => {
+      mockReadJSON.mockReturnValue(null);
 
       const result = mondaySyncUtils.getTasksNeedingSync('/path/tasks.json');
 
